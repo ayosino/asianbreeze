@@ -296,8 +296,8 @@ def fetch_latest_article(category: str) -> Dict[str, str]:
         sys.exit(1)
 
 
-def get_youtube_video(query: str, sort_param: str = None) -> Dict[str, str]:
-    """YouTubeで検索を行い、最上位の動画情報を取得する"""
+def get_youtube_videos(query: str, sort_param: str = None) -> List[Dict[str, str]]:
+    """YouTubeで検索を行い、上位の動画リストを取得する"""
     url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     if sort_param:
         url += f"&sp={sort_param}"
@@ -316,41 +316,36 @@ def get_youtube_video(query: str, sort_param: str = None) -> Dict[str, str]:
             
         if match:
             data = json.loads(match.group(1))
+            videos = []
             
-            video_node = None
-            def find_first_video(obj):
-                nonlocal video_node
-                if video_node:
-                    return
+            def find_videos(obj):
                 if isinstance(obj, dict):
                     if 'videoRenderer' in obj:
-                        video_node = obj['videoRenderer']
-                        return
+                        vr = obj['videoRenderer']
+                        video_id = vr.get('videoId')
+                        title = vr.get('title', {}).get('runs', [{}])[0].get('text', '')
+                        view_count = vr.get('viewCountText', {}).get('simpleText', '')
+                        published_time = vr.get('publishedTimeText', {}).get('simpleText', '')
+                        if video_id:
+                            videos.append({
+                                'id': video_id,
+                                'title': title,
+                                'views': view_count,
+                                'published': published_time,
+                                'url': f"https://www.youtube.com/watch?v={video_id}",
+                                'hatena_embed': f"[https://www.youtube.com/watch?v={video_id}:embed]"
+                            })
                     for val in obj.values():
-                        find_first_video(val)
+                        find_videos(val)
                 elif isinstance(obj, list):
                     for item in obj:
-                        find_first_video(item)
+                        find_videos(item)
             
-            find_first_video(data)
-            
-            if video_node:
-                video_id = video_node.get('videoId')
-                title = video_node.get('title', {}).get('runs', [{}])[0].get('text', '')
-                view_count = video_node.get('viewCountText', {}).get('simpleText', '')
-                published_time = video_node.get('publishedTimeText', {}).get('simpleText', '')
-                if video_id:
-                    return {
-                        'id': video_id,
-                        'title': title,
-                        'views': view_count,
-                        'published': published_time,
-                        'url': f"https://www.youtube.com/watch?v={video_id}",
-                        'hatena_embed': f"[https://www.youtube.com/watch?v={video_id}:embed]"
-                    }
+            find_videos(data)
+            return videos
     except Exception as e:
         print_status(f"YouTube検索中にエラーが発生しました: {e}", "warning")
-    return {}
+    return []
 
 
 def generate_content_with_gemini(
@@ -707,11 +702,25 @@ def main():
     most_viewed_video = {}
     
     if yt_query:
-        print_status(f"YouTubeで最新の動画を検索中: '{yt_query}' ...", "info")
-        latest_video = get_youtube_video(yt_query, "CAI") # 最新アップロード順
+        print_status(f"YouTubeで最新の動画リストを検索中: '{yt_query}' ...", "info")
+        latest_videos = get_youtube_videos(yt_query, "CAI") # 最新アップロード順
         
-        print_status(f"YouTubeで最も再生回数の多い動画を検索中: '{yt_query}' ...", "info")
-        most_viewed_video = get_youtube_video(yt_query, "CAM%253D") # 再生回数順
+        print_status(f"YouTubeで最も再生回数の多い動画リストを検索中: '{yt_query}' ...", "info")
+        most_viewed_videos = get_youtube_videos(yt_query, "CAM%253D") # 再生回数順
+        
+        if latest_videos:
+            latest_video = latest_videos[0]
+            
+        if most_viewed_videos:
+            # 最新の動画と重複しないものを選択
+            latest_id = latest_video.get('id') if latest_video else None
+            for video in most_viewed_videos:
+                if video.get('id') != latest_id:
+                    most_viewed_video = video
+                    break
+            # もし他に適した動画がない場合は、最初の動画を選択
+            if not most_viewed_video and most_viewed_videos:
+                most_viewed_video = most_viewed_videos[0]
     
     # YouTube動画の埋め込み部分の組み立て
     youtube_embed_text = ""
