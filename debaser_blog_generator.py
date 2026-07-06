@@ -705,8 +705,8 @@ def main():
         print_status(f"YouTubeで最新の動画リストを検索中: '{yt_query}' ...", "info")
         latest_videos = get_youtube_videos(yt_query, "CAI") # 最新アップロード順
         
-        print_status(f"YouTubeで最も再生回数の多い動画リストを検索中: '{yt_query}' ...", "info")
-        most_viewed_videos = get_youtube_videos(yt_query, "CAM%253D") # 再生回数順
+        print_status(f"YouTubeで関連性の高い人気動画リストを検索中: '{yt_query}' ...", "info")
+        most_viewed_videos = get_youtube_videos(yt_query, None) # 関連度/人気順
         
         if latest_videos:
             latest_video = latest_videos[0]
