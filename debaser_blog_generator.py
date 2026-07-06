@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Debaser Magazine Blog Post Generator for Hatena Blog
-最新の音楽記事からタイトルとアーティスト名を抽出し、はてなブログ用の紹介記事パーツを自動生成して自動投稿するスクリプト。
+最新の音楽記事からタイトルとアーティスト名を抽出し、はてなブログ用の紹介記事パーツを自動生成して AtomPub API で公開するスクリプト。
 """
 
 import os
@@ -12,9 +12,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import json
 import re
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import base64
 from typing import Dict, Any, List
 
 try:
@@ -75,7 +73,7 @@ def check_dependencies():
 def parse_args() -> argparse.Namespace:
     """コマンドライン引数のパース"""
     parser = argparse.ArgumentParser(
-        description="Debaser Magazineの最新記事からはてなブログ用パーツを自動生成・自動投稿するスクリプト"
+        description="Debaser Magazineの最新記事からはてなブログ用パーツを自動生成・API投稿するスクリプト"
     )
     parser.add_argument(
         "--category",
@@ -104,12 +102,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish",
         action="store_true",
-        help="はてなブログへの自動投稿を実行する"
+        help="はてなブログへの自動投稿（API公開）を実行する"
     )
     parser.add_argument(
-        "--publish-email",
-        default="saxvecja0a@f.hatena.ne.jp",
-        help="はてなブログのメール投稿用アドレス (デフォルト: saxvecja0a@f.hatena.ne.jp)"
+        "--hatena-id",
+        default=os.environ.get("HATENA_ID", "ayosino"),
+        help="はてなID (デフォルト: ayosino)"
+    )
+    parser.add_argument(
+        "--hatena-blog-id",
+        default=os.environ.get("HATENA_BLOG_ID", "ayosino.hatenablog.com"),
+        help="はてなブログID / ドメイン (デフォルト: ayosino.hatenablog.com)"
+    )
+    parser.add_argument(
+        "--hatena-api-key",
+        default=os.environ.get("HATENA_API_KEY", "saxvecja0a"),
+        help="はてなブログAPIキー/APIパスコード (デフォルト: saxvecja0a)"
+    )
+    parser.add_argument(
+        "--draft",
+        action="store_true",
+        default=True,
+        help="下書きとして投稿する (デフォルト: True)"
+    )
+    parser.add_argument(
+        "--no-draft",
+        action="store_false",
+        dest="draft",
+        help="下書きではなく直接公開する"
     )
     return parser.parse_args()
 
@@ -569,46 +589,72 @@ def assemble_markdown_post(
     return body
 
 
-def publish_to_hatena_blog(email_dest: str, subject: str, body: str) -> bool:
-    """メール投稿機能を利用してはてなブログへ記事を自動投稿する"""
-    smtp_host = os.environ.get("SMTP_HOST")
-    smtp_port_str = os.environ.get("SMTP_PORT", "587")
-    smtp_user = os.environ.get("SMTP_USER")
-    smtp_pass = os.environ.get("SMTP_PASSWORD")
+def publish_to_hatena_blog_api(
+    hatena_id: str,
+    blog_id: str,
+    api_key: str,
+    title: str,
+    content: str,
+    draft: bool = True
+) -> bool:
+    """はてなブログ AtomPub APIを利用して記事を投稿する"""
+    url = f"https://blog.hatena.ne.jp/{hatena_id}/{blog_id}/atom/entry"
     
-    if not all([smtp_host, smtp_user, smtp_pass]):
-        print_status("はてなブログへの自動投稿に必要なSMTP環境変数が設定されていません。", "error")
-        print("以下の環境変数を設定してください:")
-        print("  export SMTP_HOST=\"smtp.gmail.com\" (例)")
-        print("  export SMTP_PORT=\"587\" (例)")
-        print("  export SMTP_USER=\"your_email@gmail.com\"")
-        print("  export SMTP_PASSWORD=\"your_email_app_password\"")
-        return False
-        
-    try:
-        smtp_port = int(smtp_port_str)
-    except ValueError:
-        smtp_port = 587
-        
-    print_status(f"はてなブログへメールを送信中: 宛先={email_dest}, サブジェクト（記事タイトル）={subject} ...", "info")
+    # XMLペイロードの組み立て
+    draft_val = "yes" if draft else "no"
+    xml_data = f"""<?xml version="1.0" encoding="utf-8"?>
+<entry xmlns="http://www.w3.org/2005/Atom"
+       xmlns:app="http://www.w3.org/2007/app">
+  <title>{title}</title>
+  <author><name>{hatena_id}</name></author>
+  <content type="text/x-markdown">{content}</content>
+  <app:control>
+    <app:draft>{draft_val}</app:draft>
+  </app:control>
+</entry>
+"""
+    
+    headers = {
+        'Content-Type': 'application/xml; charset=utf-8',
+        'User-Agent': 'DebaserBlogGenerator/1.0'
+    }
+    
+    # Basic認証用の資格情報生成
+    auth_str = f"{hatena_id}:{api_key}"
+    auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+    headers['Authorization'] = f"Basic {auth_b64}"
+    
+    req = urllib.request.Request(
+        url,
+        data=xml_data.encode('utf-8'),
+        headers=headers,
+        method='POST'
+    )
+    
+    print_status(f"はてなブログ AtomPub APIに記事を投稿中 (宛先: {url}, 下書き: {draft_val}) ...", "info")
     
     try:
-        msg = MIMEMultipart()
-        msg['From'] = smtp_user
-        msg['To'] = email_dest
-        msg['Subject'] = subject
+        with urllib.request.urlopen(req, timeout=10) as response:
+            resp_body = response.read().decode('utf-8')
         
-        msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.send_message(msg)
+        # 投稿URLをレスポンスから簡易パース
+        published_url = ""
+        link_match = re.search(r'<link rel="alternate" type="text/html" href="([^"]+)"/>', resp_body)
+        if link_match:
+            published_url = link_match.group(1)
             
-        print_status("はてなブログへのメール送信（投稿）に成功しました！", "success")
+        print_status("はてなブログへのAPI投稿に成功しました！", "success")
+        if published_url:
+            print_status(f"公開先URL (プレビュー): {published_url}", "success")
         return True
     except Exception as e:
-        print_status(f"はてなブログへのメール送信中にエラーが発生しました: {e}", "error")
+        print_status(f"はてなブログへのAPI投稿中にエラーが発生しました: {e}", "error")
+        if hasattr(e, 'read'):
+            try:
+                error_body = e.read().decode('utf-8')
+                print(f"APIエラー詳細: {error_body}")
+            except Exception:
+                pass
         return False
 
 
@@ -751,11 +797,18 @@ def main():
 
     # はてなブログへの自動投稿処理
     if args.publish:
-        print_status("はてなブログへの自動投稿を開始します...", "info")
-        publish_to_hatena_blog(
-            email_dest=args.publish_email,
-            subject=blog_parts['blog_title'],
-            body=complete_blog_post
+        print_status("はてなブログへの自動投稿（API）を開始します...", "info")
+        if not args.hatena_api_key:
+            print_status("はてなブログAPIキーが設定されていません。環境変数 HATENA_API_KEY を設定するか、--hatena-api-key オプションを使用してください。", "error")
+            sys.exit(1)
+            
+        publish_to_hatena_blog_api(
+            hatena_id=args.hatena_id,
+            blog_id=args.hatena_blog_id,
+            api_key=args.hatena_api_key,
+            title=blog_parts['blog_title'],
+            content=complete_blog_post,
+            draft=args.draft
         )
 
 
