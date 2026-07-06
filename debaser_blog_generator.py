@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Debaser Magazine Blog Post Generator for Hatena Blog
-最新の音楽記事からタイトルとアーティスト名を抽出し、はてなブログ用の紹介記事パーツを自動生成するスクリプト。
+最新の音楽記事からタイトルとアーティスト名を抽出し、はてなブログ用の紹介記事パーツを自動生成して自動投稿するスクリプト。
 """
 
 import os
@@ -12,6 +12,9 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import json
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, List
 
 try:
@@ -72,7 +75,7 @@ def check_dependencies():
 def parse_args() -> argparse.Namespace:
     """コマンドライン引数のパース"""
     parser = argparse.ArgumentParser(
-        description="Debaser Magazineの最新記事からはてなブログ用パーツを自動生成するスクリプト"
+        description="Debaser Magazineの最新記事からはてなブログ用パーツを自動生成・自動投稿するスクリプト"
     )
     parser.add_argument(
         "--category",
@@ -97,6 +100,16 @@ def parse_args() -> argparse.Namespace:
         choices=["text", "json"],
         default="text",
         help="出力フォーマット (デフォルト: text)"
+    )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="はてなブログへの自動投稿を実行する"
+    )
+    parser.add_argument(
+        "--publish-email",
+        default="saxvecja0a@f.hatena.ne.jp",
+        help="はてなブログのメール投稿用アドレス (デフォルト: saxvecja0a@f.hatena.ne.jp)"
     )
     return parser.parse_args()
 
@@ -366,6 +379,7 @@ def generate_content_with_gemini(
         from pydantic import BaseModel, Field
 
         class HatenaBlogParts(BaseModel):
+            blog_title: str = Field(description="はてなブログ記事のキャッチーなタイトル（日本語、50文字以内、例: 【K-Indie】Kuang Programの深淵なるノイズロックの世界）")
             genre: List[str] = Field(description="アーティストのジャンル（シューゲイザー、ドリームポップ、オルタナティブロックなど、最大3つ）")
             bio_style: str = Field(description="経歴・作風（日本の音楽ファンが興味を持つような文脈を交え、300文字程度で簡潔かつ魅力的に解説。口調は「です」「ます」）")
             youtube_query: str = Field(description="YouTube検索クエリ（「アーティスト名 曲名 MV」の形式で、最も公式ミュージックビデオがヒットしやすい英語または現地語のクエリ）")
@@ -400,6 +414,7 @@ def generate_content_with_gemini(
             # 指定形式のテキスト表示用フォーマット
             genres_str = "、".join(result_data['genre'])
             text_format = (
+                f"ブログタイトル: {result_data['blog_title']}\n"
                 f"1. ジャンル: {genres_str}\n"
                 f"2. 経歴・作風: {result_data['bio_style']}\n"
                 f"3. YouTube検索クエリ: {result_data['youtube_query']}\n"
@@ -410,6 +425,7 @@ def generate_content_with_gemini(
                 "title": title,
                 "link": link,
                 "artist_name": artist_name,
+                "blog_title": result_data['blog_title'],
                 "genre": result_data['genre'],
                 "bio_style": result_data['bio_style'],
                 "youtube_query": result_data['youtube_query'],
@@ -445,6 +461,7 @@ def generate_content_with_gemini(
         f"- アーティスト名: {artist_name}\n"
         f"- 元記事本文（参考情報）: \n{content_text[:3000]}\n\n"
         f"# Output Format (指定形式)\n"
+        f"ブログタイトル: (日本の読者の興味を引くようなキャッチーな日本語のタイトル、50文字以内)\n"
         f"1. ジャンル: (例: シューゲイザー、ドリームポップ、オルタナティブロックなど、最大3つ)\n"
         f"2. 経歴・作風: (日本の音楽ファンが興味を持つような文脈を交え、300文字程度で簡潔かつ魅力的に解説)\n"
         f"3. YouTube検索クエリ: (「アーティスト名 曲名 MV」の形式で、最も公式ミュージックビデオがヒットしやすい英語または現地語のクエリ)\n"
@@ -463,18 +480,21 @@ def generate_content_with_gemini(
     text_output = resp_blog.text.strip()
     
     # テキスト出力からJSONを簡易パース
+    blog_title = f"【K-Indie】{artist_name}の最新ニュース"
     genres = []
     bio_style = ""
     yt_query = ""
     article_purpose = ""
     
     try:
-        # 正規表現でテキストから各項目を抽出
+        title_match = re.search(r"ブログタイトル:\s*(.*)", text_output)
         genre_match = re.search(r"1\.\s*ジャンル:\s*(.*)", text_output)
         bio_match = re.search(r"2\.\s*経歴・作風:\s*(.*)", text_output)
         yt_match = re.search(r"3\.\s*YouTube検索クエリ:\s*(.*)", text_output)
         purpose_match = re.search(r"4\.\s*元記事の趣旨:\s*(.*)", text_output)
         
+        if title_match:
+            blog_title = title_match.group(1).strip()
         if genre_match:
             genres = [g.strip() for g in re.split(r"[、,]", genre_match.group(1))]
         if bio_match:
@@ -490,12 +510,106 @@ def generate_content_with_gemini(
         "title": title,
         "link": link,
         "artist_name": artist_name,
+        "blog_title": blog_title,
         "genre": genres,
         "bio_style": bio_style,
         "youtube_query": yt_query,
         "article_purpose": article_purpose,
         "text_output": text_output
     }
+
+
+def assemble_markdown_post(
+    blog_parts: Dict[str, Any],
+    latest_video: Dict[str, Any],
+    most_viewed_video: Dict[str, Any]
+) -> str:
+    """はてなブログ用に各パーツをアセンブルして綺麗なMarkdown記事を作成する"""
+    genres_str = "、".join(blog_parts.get("genre", []))
+    
+    body = f"""海外音楽メディア「Debaser Magazine」の最新記事から、注目のインディーズアーティストをご紹介します。
+
+### 元記事情報
+* **紹介元の記事**: [{blog_parts['title']}]({blog_parts['link']})
+* **メディア**: Debaser Magazine
+
+---
+
+### はじめに（元記事の紹介趣旨）
+{blog_parts['article_purpose']}
+
+---
+
+### アーティスト紹介：**{blog_parts['artist_name']}**
+
+* **ジャンル**: {genres_str}
+* **経歴・作風**:
+{blog_parts['bio_style']}
+
+---
+
+### おすすめ動画・MV
+
+"""
+    if latest_video:
+        body += f"""#### 最新の動画
+{latest_video.get('hatena_embed')}
+* **動画タイトル**: {latest_video.get('title')}
+* **公開日 / 再生回数**: {latest_video.get('published')} / {latest_video.get('views')}
+
+"""
+    if most_viewed_video:
+        body += f"""#### 最も再生回数の多い動画
+{most_viewed_video.get('hatena_embed')}
+* **動画タイトル**: {most_viewed_video.get('title')}
+* **公開日 / 再生回数**: {most_viewed_video.get('published')} / {most_viewed_video.get('views')}
+
+"""
+    body += "\n*(※この記事はDebaser Magazineの公開記事情報を元に、自動生成ツールによって作成されました。)*"
+    return body
+
+
+def publish_to_hatena_blog(email_dest: str, subject: str, body: str) -> bool:
+    """メール投稿機能を利用してはてなブログへ記事を自動投稿する"""
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port_str = os.environ.get("SMTP_PORT", "587")
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+    
+    if not all([smtp_host, smtp_user, smtp_pass]):
+        print_status("はてなブログへの自動投稿に必要なSMTP環境変数が設定されていません。", "error")
+        print("以下の環境変数を設定してください:")
+        print("  export SMTP_HOST=\"smtp.gmail.com\" (例)")
+        print("  export SMTP_PORT=\"587\" (例)")
+        print("  export SMTP_USER=\"your_email@gmail.com\"")
+        print("  export SMTP_PASSWORD=\"your_email_app_password\"")
+        return False
+        
+    try:
+        smtp_port = int(smtp_port_str)
+    except ValueError:
+        smtp_port = 587
+        
+    print_status(f"はてなブログへメールを送信中: 宛先={email_dest}, サブジェクト（記事タイトル）={subject} ...", "info")
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = smtp_user
+        msg['To'] = email_dest
+        msg['Subject'] = subject
+        
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+        
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+            
+        print_status("はてなブログへのメール送信（投稿）に成功しました！", "success")
+        return True
+    except Exception as e:
+        print_status(f"はてなブログへのメール送信中にエラーが発生しました: {e}", "error")
+        return False
 
 
 def main():
@@ -553,7 +667,7 @@ def main():
         print_status(f"YouTubeで最も再生回数の多い動画を検索中: '{yt_query}' ...", "info")
         most_viewed_video = get_youtube_video(yt_query, "CAM%253D") # 再生回数順
     
-    # コンソールおよびファイルへの出力テキストの組み立て
+    # YouTube動画の埋め込み部分の組み立て
     youtube_embed_text = ""
     if latest_video or most_viewed_video:
         youtube_embed_text = "■ 実際のYouTube動画埋め込み\n"
@@ -570,8 +684,12 @@ def main():
                 f"  (タイトル: {most_viewed_video.get('title')} | 投稿: {most_viewed_video.get('published')} | 再生数: {most_viewed_video.get('views')})\n"
             )
 
+    # はてなブログへ投稿するMarkdown形式の完全な記事を作成
+    complete_blog_post = assemble_markdown_post(blog_parts, latest_video, most_viewed_video)
+
     print("\n" + "="*50)
     print_status("生成されたはてなブログ用パーツ", "success")
+    print(f"ブログ記事タイトル: {blog_parts['blog_title']}")
     print(f"元記事タイトル : {blog_parts['title']}")
     print(f"アーティスト名 : {blog_parts['artist_name']}")
     print("-"*50)
@@ -579,6 +697,7 @@ def main():
     # フォーマットに応じた出力
     if args.format == "text":
         output_content = (
+            f"■ ブログ記事タイトル: {blog_parts['blog_title']}\n"
             f"■ 元記事タイトル: {blog_parts['title']}\n"
             f"■ 元記事URL: {blog_parts['link']}\n"
             f"■ アーティスト名: {blog_parts['artist_name']}\n\n"
@@ -589,6 +708,7 @@ def main():
     else:
         # JSONフォーマット
         json_data = {
+            "blog_title": blog_parts["blog_title"],
             "source_article": {
                 "title": blog_parts["title"],
                 "url": blog_parts["link"]
@@ -613,7 +733,8 @@ def main():
                     "views": most_viewed_video.get("views"),
                     "published": most_viewed_video.get("published")
                 } if most_viewed_video else None
-            }
+            },
+            "complete_markdown": complete_blog_post
         }
         output_content = json.dumps(json_data, indent=2, ensure_ascii=False)
         print(output_content)
@@ -627,6 +748,15 @@ def main():
             print_status(f"結果をファイルに保存しました: {args.output}", "success")
         except Exception as e:
             print_status(f"ファイル保存中にエラーが発生しました: {e}", "error")
+
+    # はてなブログへの自動投稿処理
+    if args.publish:
+        print_status("はてなブログへの自動投稿を開始します...", "info")
+        publish_to_hatena_blog(
+            email_dest=args.publish_email,
+            subject=blog_parts['blog_title'],
+            body=complete_blog_post
+        )
 
 
 if __name__ == "__main__":
