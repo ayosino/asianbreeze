@@ -8,10 +8,11 @@ import os
 import sys
 import argparse
 import urllib.request
+import urllib.parse
 import xml.etree.ElementTree as ET
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 try:
     from bs4 import BeautifulSoup
@@ -262,6 +263,63 @@ def fetch_latest_article(category: str) -> Dict[str, str]:
         sys.exit(1)
 
 
+def get_youtube_video(query: str, sort_param: str = None) -> Dict[str, str]:
+    """YouTubeで検索を行い、最上位の動画情報を取得する"""
+    url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
+    if sort_param:
+        url += f"&sp={sort_param}"
+        
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8')
+        
+        match = re.search(r'var ytInitialData\s*=\s*({.*?});', html)
+        if not match:
+            match = re.search(r'window\["ytInitialData"\]\s*=\s*({.*?});', html)
+            
+        if match:
+            data = json.loads(match.group(1))
+            
+            video_node = None
+            def find_first_video(obj):
+                nonlocal video_node
+                if video_node:
+                    return
+                if isinstance(obj, dict):
+                    if 'videoRenderer' in obj:
+                        video_node = obj['videoRenderer']
+                        return
+                    for val in obj.values():
+                        find_first_video(val)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_first_video(item)
+            
+            find_first_video(data)
+            
+            if video_node:
+                video_id = video_node.get('videoId')
+                title = video_node.get('title', {}).get('runs', [{}])[0].get('text', '')
+                view_count = video_node.get('viewCountText', {}).get('simpleText', '')
+                published_time = video_node.get('publishedTimeText', {}).get('simpleText', '')
+                if video_id:
+                    return {
+                        'id': video_id,
+                        'title': title,
+                        'views': view_count,
+                        'published': published_time,
+                        'url': f"https://www.youtube.com/watch?v={video_id}",
+                        'hatena_embed': f"[https://www.youtube.com/watch?v={video_id}:embed]"
+                    }
+    except Exception as e:
+        print_status(f"YouTube検索中にエラーが発生しました: {e}", "warning")
+    return {}
+
+
 def generate_content_with_gemini(
     api_key: str,
     model_name: str,
@@ -305,14 +363,13 @@ def generate_content_with_gemini(
             artist_name = rule_based_artist_extraction(title)
             
         # はてなブログ記事パーツの生成
-        # Pydanticを使用した構造化出力を定義 (JSONフォーマット時、またはパースの安定性のために使用)
         from pydantic import BaseModel, Field
-        from typing import List
 
         class HatenaBlogParts(BaseModel):
             genre: List[str] = Field(description="アーティストのジャンル（シューゲイザー、ドリームポップ、オルタナティブロックなど、最大3つ）")
             bio_style: str = Field(description="経歴・作風（日本の音楽ファンが興味を持つような文脈を交え、300文字程度で簡潔かつ魅力的に解説。口調は「です」「ます」）")
             youtube_query: str = Field(description="YouTube検索クエリ（「アーティスト名 曲名 MV」の形式で、最も公式ミュージックビデオがヒットしやすい英語または現地語のクエリ）")
+            article_purpose: str = Field(description="元記事の趣旨（なぜこの記事が書かれたのか、どのような文脈・意図（例：新譜のリリース、周年記念、シーンの現状紹介など）で公開されたかを100文字〜150文字程度で簡潔に説明。口調は「です」「ます」）")
 
         user_prompt = (
             f"# Context\n"
@@ -345,7 +402,8 @@ def generate_content_with_gemini(
             text_format = (
                 f"1. ジャンル: {genres_str}\n"
                 f"2. 経歴・作風: {result_data['bio_style']}\n"
-                f"3. YouTube検索クエリ: {result_data['youtube_query']}"
+                f"3. YouTube検索クエリ: {result_data['youtube_query']}\n"
+                f"4. 元記事の趣旨: {result_data['article_purpose']}"
             )
             
             return {
@@ -355,6 +413,7 @@ def generate_content_with_gemini(
                 "genre": result_data['genre'],
                 "bio_style": result_data['bio_style'],
                 "youtube_query": result_data['youtube_query'],
+                "article_purpose": result_data['article_purpose'],
                 "text_output": text_format
             }
         except Exception as e:
@@ -388,7 +447,8 @@ def generate_content_with_gemini(
         f"# Output Format (指定形式)\n"
         f"1. ジャンル: (例: シューゲイザー、ドリームポップ、オルタナティブロックなど、最大3つ)\n"
         f"2. 経歴・作風: (日本の音楽ファンが興味を持つような文脈を交え、300文字程度で簡潔かつ魅力的に解説)\n"
-        f"3. YouTube検索クエリ: (「アーティスト名 曲名 MV」の形式で、最も公式ミュージックビデオがヒットしやすい英語または現地語のクエリ)\n\n"
+        f"3. YouTube検索クエリ: (「アーティスト名 曲名 MV」の形式で、最も公式ミュージックビデオがヒットしやすい英語または現地語のクエリ)\n"
+        f"4. 元記事の趣旨: (なぜこの記事が書かれたのか、どのような背景や意図（例：新譜インタビュー、来日記念、シーン紹介など）で公開されたかを100文字〜150文字程度で簡潔に説明)\n\n"
         f"# Constraints\n"
         f"- 事実が不明瞭な場合は、嘘を書かずに一般的な音楽的特徴から推測される作風として記述してください。\n"
         f"- 口調は「〜です」「〜ます」の、知的で洗練されたトーンに統一してください。\n"
@@ -406,12 +466,14 @@ def generate_content_with_gemini(
     genres = []
     bio_style = ""
     yt_query = ""
+    article_purpose = ""
     
     try:
         # 正規表現でテキストから各項目を抽出
         genre_match = re.search(r"1\.\s*ジャンル:\s*(.*)", text_output)
         bio_match = re.search(r"2\.\s*経歴・作風:\s*(.*)", text_output)
         yt_match = re.search(r"3\.\s*YouTube検索クエリ:\s*(.*)", text_output)
+        purpose_match = re.search(r"4\.\s*元記事の趣旨:\s*(.*)", text_output)
         
         if genre_match:
             genres = [g.strip() for g in re.split(r"[、,]", genre_match.group(1))]
@@ -419,6 +481,8 @@ def generate_content_with_gemini(
             bio_style = bio_match.group(1).strip()
         if yt_match:
             yt_query = yt_match.group(1).strip()
+        if purpose_match:
+            article_purpose = purpose_match.group(1).strip()
     except Exception:
         pass
         
@@ -429,6 +493,7 @@ def generate_content_with_gemini(
         "genre": genres,
         "bio_style": bio_style,
         "youtube_query": yt_query,
+        "article_purpose": article_purpose,
         "text_output": text_output
     }
 
@@ -475,6 +540,35 @@ def main():
     except Exception as e:
         print_status(f"Gemini APIによるブログパーツの生成中にエラーが発生しました: {e}", "error")
         sys.exit(1)
+        
+    # YouTube検索の実行（生成されたYouTubeクエリを使用）
+    yt_query = blog_parts["youtube_query"]
+    latest_video = {}
+    most_viewed_video = {}
+    
+    if yt_query:
+        print_status(f"YouTubeで最新の動画を検索中: '{yt_query}' ...", "info")
+        latest_video = get_youtube_video(yt_query, "CAI") # 最新アップロード順
+        
+        print_status(f"YouTubeで最も再生回数の多い動画を検索中: '{yt_query}' ...", "info")
+        most_viewed_video = get_youtube_video(yt_query, "CAM%253D") # 再生回数順
+    
+    # コンソールおよびファイルへの出力テキストの組み立て
+    youtube_embed_text = ""
+    if latest_video or most_viewed_video:
+        youtube_embed_text = "■ 実際のYouTube動画埋め込み\n"
+        if latest_video:
+            youtube_embed_text += (
+                f"・最新の動画 (はてなブログ形式):\n"
+                f"  {latest_video.get('hatena_embed')}\n"
+                f"  (タイトル: {latest_video.get('title')} | 投稿: {latest_video.get('published')} | 再生数: {latest_video.get('views')})\n"
+            )
+        if most_viewed_video:
+            youtube_embed_text += (
+                f"・最も再生回数の多い動画 (はてなブログ形式):\n"
+                f"  {most_viewed_video.get('hatena_embed')}\n"
+                f"  (タイトル: {most_viewed_video.get('title')} | 投稿: {most_viewed_video.get('published')} | 再生数: {most_viewed_video.get('views')})\n"
+            )
 
     print("\n" + "="*50)
     print_status("生成されたはてなブログ用パーツ", "success")
@@ -488,7 +582,8 @@ def main():
             f"■ 元記事タイトル: {blog_parts['title']}\n"
             f"■ 元記事URL: {blog_parts['link']}\n"
             f"■ アーティスト名: {blog_parts['artist_name']}\n\n"
-            f"{blog_parts['text_output']}"
+            f"{blog_parts['text_output']}\n\n"
+            f"{youtube_embed_text}"
         )
         print(output_content)
     else:
@@ -501,7 +596,24 @@ def main():
             "artist_name": blog_parts["artist_name"],
             "genre": blog_parts["genre"],
             "bio_style": blog_parts["bio_style"],
-            "youtube_query": blog_parts["youtube_query"]
+            "youtube_query": blog_parts["youtube_query"],
+            "article_purpose": blog_parts["article_purpose"],
+            "youtube_embeds": {
+                "latest": {
+                    "title": latest_video.get("title"),
+                    "url": latest_video.get("url"),
+                    "hatena_embed": latest_video.get("hatena_embed"),
+                    "views": latest_video.get("views"),
+                    "published": latest_video.get("published")
+                } if latest_video else None,
+                "most_viewed": {
+                    "title": most_viewed_video.get("title"),
+                    "url": most_viewed_video.get("url"),
+                    "hatena_embed": most_viewed_video.get("hatena_embed"),
+                    "views": most_viewed_video.get("views"),
+                    "published": most_viewed_video.get("published")
+                } if most_viewed_video else None
+            }
         }
         output_content = json.dumps(json_data, indent=2, ensure_ascii=False)
         print(output_content)
