@@ -607,7 +607,7 @@ def publish_to_hatena_blog_api(
        xmlns:app="http://www.w3.org/2007/app">
   <title>{title}</title>
   <author><name>{hatena_id}</name></author>
-  <content type="text/x-markdown">{content}</content>
+  <content type="text/x-markdown"><![CDATA[{content}]]></content>
   <app:control>
     <app:draft>{draft_val}</app:draft>
   </app:control>
