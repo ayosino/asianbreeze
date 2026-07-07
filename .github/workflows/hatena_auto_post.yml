@@ -32,7 +32,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site debaser --publish
+          python debaser_blog_generator.py --site debaser --publish --max-check-pages 10
 
       - name: StreetVoice Blow（台湾）の最新記事の取得と投稿
         env:
@@ -42,7 +42,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site streetvoice --publish
+          python debaser_blog_generator.py --site streetvoice --publish --max-check-pages 10
 
       - name: What The Duck（タイ）の最新記事の取得と投稿
         env:
@@ -52,4 +52,4 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site whattheduck --publish
+          python debaser_blog_generator.py --site whattheduck --publish --max-check-pages 10

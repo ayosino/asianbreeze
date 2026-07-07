@@ -137,6 +137,17 @@ def parse_args() -> argparse.Namespace:
         dest="draft",
         help="下書きではなく直接公開する"
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="重複チェックを無視して強制的に記事生成・投稿を実行する"
+    )
+    parser.add_argument(
+        "--max-check-pages",
+        type=int,
+        default=5,
+        help="重複チェック時に遡るはてなブログのエントリー一覧の最大ページ数 (デフォルト: 5)"
+    )
     return parser.parse_args()
 
 
@@ -594,10 +605,13 @@ def assemble_markdown_post(
     }
     site_name = site_names.get(site, site.upper())
     
+    translate_url = f"https://translate.google.com/translate?sl=auto&tl=ja&u={urllib.parse.quote(blog_parts['link'])}"
+    
     body = f"""海外のインディーズ音楽メディア「{site_name}」の最新記事から、注目のアーティストをご紹介します。
 
 ### 元記事情報
-* **紹介元の記事**: [{blog_parts['title']}]({blog_parts['link']})
+* **紹介元の記事 (原文)**: [{blog_parts['title']}]({blog_parts['link']})
+* **紹介元の記事 (日本語自動翻訳版)**: [Google翻訳で読む]({translate_url})
 * **メディア**: {site_name}
 
 ---
@@ -704,6 +718,91 @@ def publish_to_hatena_blog_api(
         return False
 
 
+def check_duplicate(
+    hatena_id: str,
+    blog_id: str,
+    api_key: str,
+    source_url: str,
+    max_pages: int = 5
+) -> bool:
+    """Hatena Blogの過去記事をチェックし、指定されたソースURLの記事がすでに紹介されているか調べる"""
+    url = f"https://blog.hatena.ne.jp/{hatena_id}/{blog_id}/atom/entry"
+    
+    # 比較のためにURLを正規化（プロトコルと末尾のスラッシュを無視）
+    def clean_url(u: str) -> str:
+        u = re.sub(r'^https?://', '', u)
+        u = u.rstrip('/')
+        return u
+        
+    cleaned_source = clean_url(source_url)
+    
+    auth_str = f"{hatena_id}:{api_key}"
+    auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+    headers = {
+        'Authorization': f"Basic {auth_b64}",
+        'User-Agent': 'DebaserBlogGenerator/1.0'
+    }
+    
+    current_url = url
+    pages_checked = 0
+    
+    print_status(f"既に公開されている記事の重複チェックを開始します (上限: {max_pages}ページ)...", "info")
+    
+    while current_url and pages_checked < max_pages:
+        try:
+            req = urllib.request.Request(current_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                xml_data = response.read()
+                
+            root = ET.fromstring(xml_data)
+            
+            # 各エントリーをチェック
+            entries = root.findall("{http://www.w3.org/2005/Atom}entry")
+            for entry in entries:
+                title_el = entry.find("{http://www.w3.org/2005/Atom}title")
+                title = title_el.text if title_el is not None else ""
+                
+                content_el = entry.find("{http://www.w3.org/2005/Atom}content")
+                content = content_el.text if (content_el is not None and content_el.text is not None) else ""
+                
+                summary_el = entry.find("{http://www.w3.org/2005/Atom}summary")
+                summary = summary_el.text if (summary_el is not None and summary_el.text is not None) else ""
+                
+                text_to_check = content + "\n" + summary
+                
+                # コンテンツ内の紹介元URLをチェック
+                found_urls = re.findall(r'https?://[^\s\)\]\"\'\>\<\,\;]+', text_to_check)
+                for f_url in found_urls:
+                    if clean_url(f_url) == cleaned_source:
+                        print_status("重複記事が見つかりました！", "warning")
+                        print_status(f"  重複する公開済記事: {title}", "warning")
+                        print_status(f"  紹介元URL: {source_url}", "warning")
+                        return True
+                        
+            # 次のページURLを取得
+            next_url = None
+            for link in root.findall("{http://www.w3.org/2005/Atom}link"):
+                if link.get("rel") == "next":
+                    next_url = link.get("href")
+                    break
+            
+            current_url = next_url
+            pages_checked += 1
+            
+        except Exception as e:
+            print_status(f"はてなブログ過去記事の取得中にエラーが発生しました: {e}", "warning")
+            if hasattr(e, 'read'):
+                try:
+                    error_body = e.read().decode('utf-8')
+                    print(f"APIエラー詳細: {error_body}")
+                except Exception:
+                    pass
+            raise e
+            
+    print_status("重複する記事は見つかりませんでした。", "success")
+    return False
+
+
 def main():
     # 依存ライブラリの確認
     check_dependencies()
@@ -727,6 +826,36 @@ def main():
     print(f"元記事タイトル : {article['title']}")
     print(f"元記事リンク     : {article['link']}")
     print("="*50 + "\n")
+    
+    # 重複チェックの実行
+    is_duplicate = False
+    if not args.force:
+        # はてなブログの認証情報が存在するか確認
+        if args.hatena_id and args.hatena_blog_id and args.hatena_api_key:
+            try:
+                is_duplicate = check_duplicate(
+                    hatena_id=args.hatena_id,
+                    blog_id=args.hatena_blog_id,
+                    api_key=args.hatena_api_key,
+                    source_url=article['link'],
+                    max_pages=args.max_check_pages
+                )
+            except Exception as e:
+                if args.publish:
+                    print_status("重複チェック中にエラーが発生したため、処理を中断します（--publish指定時）。", "error")
+                    sys.exit(1)
+                else:
+                    print_status("認証情報の不整合または通信エラーのため、重複チェックをスキップして処理を続行します。", "warning")
+        else:
+            if args.publish:
+                print_status("はてなブログの認証情報が設定されていないため、処理を中断します（--publish指定時）。", "error")
+                sys.exit(1)
+            else:
+                print_status("はてなブログの認証情報が設定されていないため、重複チェックをスキップします。", "warning")
+                
+    if is_duplicate:
+        print_status("取得した記事はすでに紹介済みのため、処理を終了します。", "warning")
+        sys.exit(0)
     
     # Geminiを使用したコンテンツの生成
     try:
