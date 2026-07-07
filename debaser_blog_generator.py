@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Debaser Magazine Blog Post Generator for Hatena Blog
+Debaser Magazine, StreetVoice Blow, What The Duck Blog Post Generator for Hatena Blog
 最新の音楽記事からタイトルとアーティスト名を抽出し、はてなブログ用の紹介記事パーツを自動生成して AtomPub API で公開するスクリプト。
 """
 
@@ -73,13 +73,19 @@ def check_dependencies():
 def parse_args() -> argparse.Namespace:
     """コマンドライン引数のパース"""
     parser = argparse.ArgumentParser(
-        description="Debaser Magazineの最新記事からはてなブログ用パーツを自動生成・API投稿するスクリプト"
+        description="音楽メディア最新記事からはてなブログ用パーツを自動生成・API投稿するスクリプト"
+    )
+    parser.add_argument(
+        "--site",
+        choices=["debaser", "streetvoice", "whattheduck"],
+        default="debaser",
+        help="対象にする情報取得元サイト (デフォルト: debaser)"
     )
     parser.add_argument(
         "--category",
         choices=["music", "art", "onscreen", "culturecommunity", "all"],
         default="music",
-        help="対象にする記事カテゴリ (デフォルト: music)"
+        help="対象にする記事カテゴリ (debaserサイト選択時のみ有効, デフォルト: music)"
     )
     parser.add_argument(
         "--api-key",
@@ -138,22 +144,25 @@ def rule_based_artist_extraction(title: str) -> str:
     """Gemini API呼び出しが失敗した際などのルールベースのアーティスト名抽出フォールバック"""
     title = title.strip(' "“’‘”')
     
+    # タイトルのカッコ書きなどを事前にトリミング (例: เดิมเดิม (Once) -> Once)
+    title_clean = re.sub(r'\(.*?\)', '', title).strip()
+    title_clean = re.sub(r'（.*?）', '', title_clean).strip()
+    
     # 1. "Artist on structure, freedom..." パターン
-    if " on " in title:
-        parts = title.split(" on ")
+    if " on " in title_clean:
+        parts = title_clean.split(" on ")
         return parts[0].strip()
     
     # 2. "Title" - Artist's... パターン
-    if " - " in title:
-        parts = title.split(" - ")
+    if " - " in title_clean:
+        parts = title_clean.split(" - ")
         candidate = parts[1].strip()
-        # 所有格（'s）の削除
         candidate = re.sub(r"['’]s\b.*", "", candidate, flags=re.IGNORECASE)
         return candidate
     
     # 3. Artist: Title または Title: Artist on... パターン
-    if ":" in title:
-        parts = title.split(":")
+    if ":" in title_clean:
+        parts = title_clean.split(":")
         if " on " in parts[1]:
             subparts = parts[1].split(" on ")
             return subparts[0].strip()
@@ -164,135 +173,172 @@ def rule_based_artist_extraction(title: str) -> str:
     return "Unknown"
 
 
-def fetch_latest_article(category: str) -> Dict[str, str]:
+def extract_article_content_from_url(url: str) -> str:
+    """記事詳細ページのURLから本文を抽出する"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read()
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # WordPress (.entry-content), Wix (article), Squarespace (.blog-item-content) 等に対応
+        content_el = (
+            soup.find('article') or 
+            soup.find(class_='blog-item-content') or 
+            soup.find(class_='entry-content') or 
+            soup.find(class_='post-content')
+        )
+        if content_el:
+            return content_el.get_text(separator='\n').strip()
+        else:
+            return soup.get_text(separator='\n').strip()
+    except Exception as e:
+        print_status(f"URLからの本文抽出に失敗しました ({url}): {e}", "warning")
+        return ""
+
+
+def fetch_latest_article(site: str, category: str) -> Dict[str, str]:
     """最新記事の取得 (RSSフィードを優先し、失敗時はHTMLスクレイピングを行う)"""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
 
-    # 1. RSSフィードでの取得を試行
-    if category != "all":
-        feed_url = f"https://debasermagazine.com/{category}?format=rss"
-        print_status(f"RSSフィードから最新記事を取得中: {feed_url} ...", "info")
-        try:
-            req = urllib.request.Request(feed_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as response:
-                rss_data = response.read()
-            
-            root = ET.fromstring(rss_data)
-            items = root.findall('.//item')
-            if items:
-                latest_item = items[0]
-                title = latest_item.find('title').text.strip()
-                link = latest_item.find('link').text.strip()
-                
-                description_el = latest_item.find('description')
-                description = description_el.text.strip() if description_el is not None else ""
-                
-                encoded_el = latest_item.find('{http://purl.org/rss/1.0/modules/content/}encoded')
-                content_html = encoded_el.text if encoded_el is not None else ""
-                
-                if content_html:
-                    soup = BeautifulSoup(content_html, 'html.parser')
-                    content_text = soup.get_text(separator='\n').strip()
-                else:
-                    content_text = description
-                    
-                return {
-                    'title': title,
-                    'link': link,
-                    'description': description,
-                    'content_text': content_text,
-                    'source': 'RSS Feed'
-                }
-        except Exception as e:
-            print_status(f"RSSフィードの取得/解析に失敗しました: {e}。HTMLスクレイピングを試みます...", "warning")
+    # 1. 各サイトのRSSフィードURL設定
+    if site == "debaser":
+        feed_url = f"https://debasermagazine.com/{category}?format=rss" if category != "all" else "https://debasermagazine.com/music?format=rss"
+    elif site == "streetvoice":
+        feed_url = "https://blow.streetvoice.com/feed/"
+    elif site == "whattheduck":
+        feed_url = "https://www.whattheduckmusic.com/blog-feed.xml"
 
-    # 2. HTMLスクレイピングでの取得（RSS失敗時、または category='all' の場合）
-    site_url = "https://debasermagazine.com/"
-    print_status(f"ホームページからHTMLをスクレイピング中: {site_url} ...", "info")
+    print_status(f"RSSフィードから最新記事を取得中 ({site}): {feed_url} ...", "info")
     try:
-        req = urllib.request.Request(site_url, headers=headers)
+        req = urllib.request.Request(feed_url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as response:
-            html_data = response.read()
+            rss_data = response.read()
+        
+        root = ET.fromstring(rss_data)
+        items = root.findall('.//item')
+        if items:
+            latest_item = items[0]
+            title = latest_item.find('title').text.strip()
+            link = latest_item.find('link').text.strip()
             
-        soup = BeautifulSoup(html_data, 'html.parser')
-        items = []
-        for item in soup.find_all(class_='summary-item'):
-            title_el = item.find(class_='summary-title-link')
-            if not title_el:
-                continue
-            title = title_el.text.strip()
-            link = title_el.get('href', '').strip()
-            if not link.startswith('http'):
-                link = "https://debasermagazine.com" + link
+            description_el = latest_item.find('description')
+            description = description_el.text.strip() if description_el is not None else ""
+            
+            # encoded要素からの本文取得 (WordPress, Squarespace対応)
+            encoded_el = latest_item.find('{http://purl.org/rss/1.0/modules/content/}encoded')
+            content_html = encoded_el.text if encoded_el is not None else ""
+            
+            if content_html:
+                soup = BeautifulSoup(content_html, 'html.parser')
+                content_text = soup.get_text(separator='\n').strip()
+            else:
+                # WixなどのようにRSSにencoded本文が含まれない場合はURLから動的抽出
+                print_status("RSSに本文が含まれていないため、記事URLから直接抽出します...", "info")
+                content_text = extract_article_content_from_url(link)
+                if not content_text:
+                    content_text = description
                 
-            date_el = item.find('time')
-            date_obj = None
-            if date_el:
-                datetime_attr = date_el.get('datetime', '')
-                if datetime_attr:
-                    try:
-                        from datetime import datetime
-                        date_obj = datetime.strptime(datetime_attr, '%Y-%m-%d')
-                    except ValueError:
-                        pass
-            
-            excerpt_el = item.find(class_='summary-excerpt')
-            excerpt = excerpt_el.text.strip() if excerpt_el else ""
-            
-            items.append({
+            return {
                 'title': title,
                 'link': link,
-                'date_obj': date_obj,
-                'excerpt': excerpt
-            })
-            
-        # カテゴリフィルタリング
-        if category != "all":
-            path_filter = f"/{category}/"
-            filtered_items = [i for i in items if path_filter in i['link']]
-            target_items = filtered_items if filtered_items else items
-        else:
-            target_items = items
-            
-        if not target_items:
-            raise ValueError(f"カテゴリ '{category}' に該当する記事が見つかりませんでした。")
-            
-        # 日付でソートして最新のものを取得
-        sorted_items = sorted(
-            [i for i in target_items if i['date_obj']],
-            key=lambda x: x['date_obj'],
-            reverse=True
-        )
-        latest = sorted_items[0] if sorted_items else target_items[0]
-        
-        # 記事詳細ページから本文のテキストを抽出
-        article_text = ""
-        try:
-            print_status(f"記事詳細ページから本文を取得中: {latest['link']} ...", "info")
-            req_article = urllib.request.Request(latest['link'], headers=headers)
-            with urllib.request.urlopen(req_article, timeout=10) as resp_article:
-                article_html = resp_article.read()
-            article_soup = BeautifulSoup(article_html, 'html.parser')
-            content_el = article_soup.find(class_='blog-item-content') or article_soup.find(class_='entry-content')
-            if content_el:
-                article_text = content_el.get_text(separator='\n').strip()
-            else:
-                article_text = latest['excerpt']
-        except Exception as e:
-            print_status(f"詳細ページの取得に失敗したため、抜粋を使用します: {e}", "warning")
-            article_text = latest['excerpt']
-            
-        return {
-            'title': latest['title'],
-            'link': latest['link'],
-            'description': latest['excerpt'],
-            'content_text': article_text,
-            'source': 'HTML Scraping'
-        }
+                'description': description,
+                'content_text': content_text,
+                'source': f"{site.upper()} RSS"
+            }
     except Exception as e:
-        print_status(f"最新記事の取得に失敗しました: {e}", "error")
+        print_status(f"RSSフィードの取得/解析に失敗しました: {e}。HTMLスクレイピングを試みます...", "warning")
+
+    # 2. 各サイトのHTMLスクレイピング・フォールバック
+    print_status(f"スクレイピングによる最新記事取得を試みます...", "info")
+    try:
+        if site == "debaser":
+            site_url = "https://debasermagazine.com/"
+            req = urllib.request.Request(site_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html_data = response.read()
+            soup = BeautifulSoup(html_data, 'html.parser')
+            items = []
+            for item in soup.find_all(class_='summary-item'):
+                title_el = item.find(class_='summary-title-link')
+                if not title_el:
+                    continue
+                title = title_el.text.strip()
+                link = title_el.get('href', '').strip()
+                if not link.startswith('http'):
+                    link = "https://debasermagazine.com" + link
+                excerpt_el = item.find(class_='summary-excerpt')
+                excerpt = excerpt_el.text.strip() if excerpt_el else ""
+                items.append({'title': title, 'link': link, 'excerpt': excerpt})
+            if items:
+                latest = items[0]
+                content_text = extract_article_content_from_url(latest['link'])
+                return {
+                    'title': latest['title'],
+                    'link': latest['link'],
+                    'description': latest['excerpt'],
+                    'content_text': content_text or latest['excerpt'],
+                    'source': 'DEBASER HTML Scrape'
+                }
+
+        elif site == "streetvoice":
+            site_url = "https://blow.streetvoice.com/"
+            req = urllib.request.Request(site_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html_data = response.read()
+            soup = BeautifulSoup(html_data, 'html.parser')
+            links = []
+            for a in soup.find_all('a'):
+                href = a.get('href', '')
+                if re.search(r'blow\.streetvoice\.com/\d+/?$', href):
+                    title = a.text.strip()
+                    if len(title) > 5:
+                        links.append({'title': title, 'link': href})
+            if links:
+                latest = links[0]
+                content_text = extract_article_content_from_url(latest['link'])
+                return {
+                    'title': latest['title'],
+                    'link': latest['link'],
+                    'description': latest['title'],
+                    'content_text': content_text,
+                    'source': 'STREETVOICE HTML Scrape'
+                }
+
+        elif site == "whattheduck":
+            site_url = "https://www.whattheduckmusic.com/"
+            req = urllib.request.Request(site_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html_data = response.read()
+            soup = BeautifulSoup(html_data, 'html.parser')
+            links = []
+            for a in soup.find_all('a'):
+                href = a.get('href', '')
+                if '/post/' in href:
+                    if not href.startswith('http'):
+                        href = "https://www.whattheduckmusic.com" + href
+                    title = a.text.strip() or a.get('aria-label', '').strip()
+                    if len(title) > 1:
+                        links.append({'title': title, 'link': href})
+            if links:
+                latest = links[0]
+                content_text = extract_article_content_from_url(latest['link'])
+                return {
+                    'title': latest['title'],
+                    'link': latest['link'],
+                    'description': latest['title'],
+                    'content_text': content_text,
+                    'source': 'WHATTHEDUCK HTML Scrape'
+                }
+
+        raise ValueError("対応するスクレイピングロジックが見つかりません。")
+    except Exception as e:
+        print_status(f"最新記事の取得に完全に失敗しました: {e}", "error")
         sys.exit(1)
 
 
@@ -371,11 +417,11 @@ def generate_content_with_gemini(
         
         # アーティスト名の抽出
         artist_prompt = (
-            f"以下は海外の音楽メディア記事のタイトルと要約です。この記事で紹介されている中心的な音楽アーティストまたはバンド名を抽出してください。\n"
+            f"以下は海外の音楽メディア記事のタイトルと本文です。この記事で紹介されている中心的な音楽アーティストまたはバンド名を抽出してください。\n"
             f"回答はアーティスト/バンド名のみとし、余計な説明や引用符、句読点は一切含めないでください。\n"
             f"もし特定のアーティストではなくイベントやコンピレーションなどの場合は、主役となるアーティスト名、または最も関連するアーティスト名を1つだけ抽出してください。判断が難しい場合は 'Unknown' と返してください。\n\n"
             f"タイトル: {title}\n"
-            f"概要: {description}\n"
+            f"本文: {content_text[:1000]}\n"
         )
         try:
             resp_artist = client.models.generate_content(
@@ -426,7 +472,6 @@ def generate_content_with_gemini(
             )
             result_data = json.loads(resp_blog.text)
             
-            # 指定形式のテキスト表示用フォーマット
             genres_str = "、".join(result_data['genre'])
             text_format = (
                 f"ブログタイトル: {result_data['blog_title']}\n"
@@ -494,7 +539,6 @@ def generate_content_with_gemini(
         
     text_output = resp_blog.text.strip()
     
-    # テキスト出力からJSONを簡易パース
     blog_title = f"【K-Indie】{artist_name}の最新ニュース"
     genres = []
     bio_style = ""
@@ -535,6 +579,7 @@ def generate_content_with_gemini(
 
 
 def assemble_markdown_post(
+    site: str,
     blog_parts: Dict[str, Any],
     latest_video: Dict[str, Any],
     most_viewed_video: Dict[str, Any]
@@ -542,11 +587,18 @@ def assemble_markdown_post(
     """はてなブログ用に各パーツをアセンブルして綺麗なMarkdown記事を作成する"""
     genres_str = "、".join(blog_parts.get("genre", []))
     
-    body = f"""海外音楽メディア「Debaser Magazine」の最新記事から、注目のインディーズアーティストをご紹介します。
+    site_names = {
+        "debaser": "Debaser Magazine",
+        "streetvoice": "Blow (StreetVoice)",
+        "whattheduck": "What The Duck"
+    }
+    site_name = site_names.get(site, site.upper())
+    
+    body = f"""海外のインディーズ音楽メディア「{site_name}」の最新記事から、注目のアーティストをご紹介します。
 
 ### 元記事情報
 * **紹介元の記事**: [{blog_parts['title']}]({blog_parts['link']})
-* **メディア**: Debaser Magazine
+* **メディア**: {site_name}
 
 ---
 
@@ -574,13 +626,13 @@ def assemble_markdown_post(
 
 """
     if most_viewed_video:
-        body += f"""#### 最も再生回数の多い動画
+        body += f"""#### おすすめの人気動画
 {most_viewed_video.get('hatena_embed')}
 * **動画タイトル**: {most_viewed_video.get('title')}
 * **公開日 / 再生回数**: {most_viewed_video.get('published')} / {most_viewed_video.get('views')}
 
 """
-    body += "\n*(※この記事はDebaser Magazineの公開記事情報を元に、自動生成ツールによって作成されました。)*"
+    body += f"\n*(※この記事は {site_name} の公開記事情報を元に、自動生成ツールによって作成されました。)*"
     return body
 
 
@@ -595,7 +647,7 @@ def publish_to_hatena_blog_api(
     """はてなブログ AtomPub APIを利用して記事を投稿する"""
     url = f"https://blog.hatena.ne.jp/{hatena_id}/{blog_id}/atom/entry"
     
-    # XMLペイロードの組み立て
+    # XMLペイロードの組み立て (特殊文字崩れ防止のためCDATAでラップ)
     draft_val = "yes" if draft else "no"
     xml_data = f"""<?xml version="1.0" encoding="utf-8"?>
 <entry xmlns="http://www.w3.org/2005/Atom"
@@ -614,7 +666,6 @@ def publish_to_hatena_blog_api(
         'User-Agent': 'DebaserBlogGenerator/1.0'
     }
     
-    # Basic認証用の資格情報生成
     auth_str = f"{hatena_id}:{api_key}"
     auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
     headers['Authorization'] = f"Basic {auth_b64}"
@@ -665,20 +716,16 @@ def main():
     if not api_key:
         print_status("GEMINI_API_KEY が設定されていません。", "error")
         print("APIキーを設定してからスクリプトを実行してください。")
-        print("設定方法:")
-        print("  export GEMINI_API_KEY=\"あなたのAPIキー\"")
-        print("または引数で指定:")
-        print("  python debaser_blog_generator.py --api-key \"あなたのAPIキー\"")
         sys.exit(1)
         
     # 最新記事の取得
-    article = fetch_latest_article(args.category)
+    article = fetch_latest_article(args.site, args.category)
     
     print("\n" + "="*50)
     print_status("取得した記事情報", "success")
+    print(f"情報取得元     : {article['source']}")
     print(f"元記事タイトル : {article['title']}")
     print(f"元記事リンク     : {article['link']}")
-    print(f"情報取得元     : {article['source']}")
     print("="*50 + "\n")
     
     # Geminiを使用したコンテンツの生成
@@ -696,29 +743,27 @@ def main():
         print_status(f"Gemini APIによるブログパーツの生成中にエラーが発生しました: {e}", "error")
         sys.exit(1)
         
-    # YouTube検索の実行（生成されたYouTubeクエリを使用）
+    # YouTube検索の実行
     yt_query = blog_parts["youtube_query"]
     latest_video = {}
     most_viewed_video = {}
     
     if yt_query:
         print_status(f"YouTubeで最新の動画リストを検索中: '{yt_query}' ...", "info")
-        latest_videos = get_youtube_videos(yt_query, "CAI") # 最新アップロード順
+        latest_videos = get_youtube_videos(yt_query, "CAI")
         
         print_status(f"YouTubeで関連性の高い人気動画リストを検索中: '{yt_query}' ...", "info")
-        most_viewed_videos = get_youtube_videos(yt_query, None) # 関連度/人気順
+        most_viewed_videos = get_youtube_videos(yt_query, None)
         
         if latest_videos:
             latest_video = latest_videos[0]
             
         if most_viewed_videos:
-            # 最新の動画と重複しないものを選択
             latest_id = latest_video.get('id') if latest_video else None
             for video in most_viewed_videos:
                 if video.get('id') != latest_id:
                     most_viewed_video = video
                     break
-            # もし他に適した動画がない場合は、最初の動画を選択
             if not most_viewed_video and most_viewed_videos:
                 most_viewed_video = most_viewed_videos[0]
     
@@ -734,13 +779,13 @@ def main():
             )
         if most_viewed_video:
             youtube_embed_text += (
-                f"・最も再生回数の多い動画 (はてなブログ形式):\n"
+                f"・関連性の高い動画 (はてなブログ形式):\n"
                 f"  {most_viewed_video.get('hatena_embed')}\n"
                 f"  (タイトル: {most_viewed_video.get('title')} | 投稿: {most_viewed_video.get('published')} | 再生数: {most_viewed_video.get('views')})\n"
             )
 
     # はてなブログへ投稿するMarkdown形式の完全な記事を作成
-    complete_blog_post = assemble_markdown_post(blog_parts, latest_video, most_viewed_video)
+    complete_blog_post = assemble_markdown_post(args.site, blog_parts, latest_video, most_viewed_video)
 
     print("\n" + "="*50)
     print_status("生成されたはてなブログ用パーツ", "success")
@@ -808,7 +853,7 @@ def main():
     if args.publish:
         print_status("はてなブログへの自動投稿（API）を開始します...", "info")
         if not args.hatena_api_key:
-            print_status("はてなブログAPIキーが設定されていません。環境変数 HATENA_API_KEY を設定するか、--hatena-api-key オプションを使用してください。", "error")
+            print_status("はてなブログAPIキーが設定されていません。", "error")
             sys.exit(1)
             
         publish_to_hatena_blog_api(
