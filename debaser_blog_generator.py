@@ -632,17 +632,26 @@ def assemble_markdown_post(
 ### おすすめ動画・MV
 
 """
+    def escape_markdown(text: str) -> str:
+        if not text:
+            return ""
+        return re.sub(r'([\*\_\[\]\(\)])', r'\\\1', text)
+
     if latest_video:
+        latest_title = escape_markdown(latest_video.get('title', ''))
         body += f"""#### 最新の動画
 {latest_video.get('hatena_embed')}
-* **動画タイトル**: {latest_video.get('title')}
+
+* **動画タイトル**: {latest_title}
 * **公開日 / 再生回数**: {latest_video.get('published')} / {latest_video.get('views')}
 
 """
     if most_viewed_video:
-        body += f"""#### おすすめの人気動画
+        most_viewed_title = escape_markdown(most_viewed_video.get('title', ''))
+        body += f"""#### 人気動画
 {most_viewed_video.get('hatena_embed')}
-* **動画タイトル**: {most_viewed_video.get('title')}
+
+* **動画タイトル**: {most_viewed_title}
 * **公開日 / 再生回数**: {most_viewed_video.get('published')} / {most_viewed_video.get('views')}
 
 """
