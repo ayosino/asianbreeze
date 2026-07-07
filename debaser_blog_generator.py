@@ -616,7 +616,7 @@ def assemble_markdown_post(
 
 ---
 
-### はじめに（元記事の紹介趣旨）
+### 元記事の概要
 {blog_parts['article_purpose']}
 
 ---
