@@ -65,7 +65,8 @@ python3 debaser_blog_generator.py --publish --no-draft
 ```
 
 ### その他のオプション
-- `--category`: 記事のカテゴリ（`music`, `art`, `onscreen`, `culturecommunity`, `all`）を指定します（デフォルトは `music`）。
+- `--site`: 対象にする情報取得元サイト。`debaser`, `streetvoice`, `whattheduck`, `koreanindie`, `fungjaizine`, `pophariini`, `whiteboardjournal` から選択可能（デフォルト: `debaser`）。
+- `--category`: 記事のカテゴリ（`music`, `art`, `onscreen`, `culturecommunity`, `all`）を指定します（debaserサイトのみ有効、デフォルトは `music`）。
 - `--format`: 出力形式（`text` または `json`）を指定します。
 - `--output`: 生成結果をテキストファイルまたはJSONファイルとして保存します。
 - `--model`: 使用するGeminiモデル名（デフォルト: `gemini-2.5-flash`）。

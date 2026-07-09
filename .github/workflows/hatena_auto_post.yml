@@ -53,3 +53,43 @@ jobs:
         continue-on-error: true
         run: |
           python debaser_blog_generator.py --site whattheduck --publish --max-check-pages 10
+
+      - name: Korean Indie（韓国）の最新記事の取得と投稿
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HATENA_ID: ${{ secrets.HATENA_ID }}
+          HATENA_BLOG_ID: ${{ secrets.HATENA_BLOG_ID }}
+          HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
+        continue-on-error: true
+        run: |
+          python debaser_blog_generator.py --site koreanindie --publish --max-check-pages 10
+
+      - name: Fungjaizine（タイ）の最新記事の取得と投稿
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HATENA_ID: ${{ secrets.HATENA_ID }}
+          HATENA_BLOG_ID: ${{ secrets.HATENA_BLOG_ID }}
+          HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
+        continue-on-error: true
+        run: |
+          python debaser_blog_generator.py --site fungjaizine --publish --max-check-pages 10
+
+      - name: Pop Hari Ini（インドネシア）の最新記事の取得と投稿
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HATENA_ID: ${{ secrets.HATENA_ID }}
+          HATENA_BLOG_ID: ${{ secrets.HATENA_BLOG_ID }}
+          HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
+        continue-on-error: true
+        run: |
+          python debaser_blog_generator.py --site pophariini --publish --max-check-pages 10
+
+      - name: Whiteboard Journal（インドネシア）の最新記事の取得と投稿
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HATENA_ID: ${{ secrets.HATENA_ID }}
+          HATENA_BLOG_ID: ${{ secrets.HATENA_BLOG_ID }}
+          HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
+        continue-on-error: true
+        run: |
+          python debaser_blog_generator.py --site whiteboardjournal --publish --max-check-pages 10

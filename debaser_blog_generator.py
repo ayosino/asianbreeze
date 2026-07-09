@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--site",
-        choices=["debaser", "streetvoice", "whattheduck"],
+        choices=["debaser", "streetvoice", "whattheduck", "koreanindie", "fungjaizine", "pophariini", "whiteboardjournal"],
         default="debaser",
         help="対象にする情報取得元サイト (デフォルト: debaser)"
     )
@@ -217,6 +217,127 @@ def fetch_latest_article(site: str, category: str) -> Dict[str, str]:
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
 
+    # Custom handling for Korean Indie (WordPress REST API)
+    if site == "koreanindie":
+        wp_api_url = "https://www.koreanindie.com/wp-json/wp/v2/posts?per_page=5"
+        print_status(f"WordPress REST APIから最新記事を取得中 ({site}): {wp_api_url} ...", "info")
+        try:
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+            req = urllib.request.Request(wp_api_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
+                content_data = response.read().decode('utf-8')
+            posts = json.loads(content_data)
+            if posts:
+                latest_post = posts[0]
+                title = latest_post.get('title', {}).get('rendered', '').strip()
+                link = latest_post.get('link', '').strip()
+                
+                excerpt_html = latest_post.get('excerpt', {}).get('rendered', '')
+                description = BeautifulSoup(excerpt_html, 'html.parser').get_text(separator='\n').strip()
+                
+                content_html = latest_post.get('content', {}).get('rendered', '')
+                content_text = BeautifulSoup(content_html, 'html.parser').get_text(separator='\n').strip()
+                
+                return {
+                    'title': title,
+                    'link': link,
+                    'description': description,
+                    'content_text': content_text,
+                    'source': f"{site.upper()} WP-API"
+                }
+        except Exception as e:
+            print_status(f"WordPress REST APIの取得に失敗しました: {e}", "warning")
+
+    # Custom handling for Fungjaizine (HTML scraping)
+    elif site == "fungjaizine":
+        site_url = "https://fungjaizine.com/"
+        print_status(f"HTMLスクレイピングから最新記事を取得中 ({site}): {site_url} ...", "info")
+        try:
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+            req = urllib.request.Request(site_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
+                html_data = response.read().decode('utf-8')
+            
+            soup = BeautifulSoup(html_data, 'html.parser')
+            found_articles = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if href.startswith('http'):
+                    full_url = href
+                else:
+                    href_clean = href.lstrip('/')
+                    full_url = f"https://fungjaizine.com/{href_clean}"
+                    
+                path = full_url.replace('https://fungjaizine.com', '')
+                parts = [p for p in path.strip('/').split('/') if p]
+                
+                if len(parts) >= 2 and parts[0] in ['article', 'news', 'interview', 'trending_news', 'quick_read']:
+                    title = a.text.strip()
+                    if not title:
+                        img = a.find('img')
+                        if img and img.get('alt'):
+                            title = img.get('alt').strip()
+                    if not title:
+                        h_tag = a.find(['h1', 'h2', 'h3', 'h4']) or a.parent.find(['h1', 'h2', 'h3', 'h4'])
+                        if h_tag:
+                            title = h_tag.text.strip()
+                    
+                    if full_url not in [x['link'] for x in found_articles]:
+                        found_articles.append({'title': title or 'Untitled', 'link': full_url})
+            
+            if found_articles:
+                latest = found_articles[0]
+                print_status(f"最新記事のURLを特定しました: {latest['link']}。詳細コンテンツを取得します...", "info")
+                
+                # Fetch details page
+                art_req = urllib.request.Request(latest['link'], headers=headers)
+                with urllib.request.urlopen(art_req, timeout=10, context=ssl_context) as response:
+                    art_content = response.read().decode('utf-8')
+                art_soup = BeautifulSoup(art_content, 'html.parser')
+                
+                title = latest['title']
+                if title == 'Untitled' or not title:
+                    h1_tag = art_soup.find('h1')
+                    if h1_tag:
+                        title = h1_tag.text.strip()
+                    else:
+                        title_tag = art_soup.find('title')
+                        if title_tag:
+                            title = title_tag.text.strip()
+                
+                content_el = (
+                    art_soup.find('article') or 
+                    art_soup.find(class_='blog-item-content') or 
+                    art_soup.find(class_='entry-content') or 
+                    art_soup.find(class_='post-content') or
+                    art_soup.find(class_='content') or
+                    art_soup.find(id='content') or
+                    art_soup.find(class_='post')
+                )
+                
+                if content_el:
+                    content_text = content_el.get_text(separator='\n').strip()
+                else:
+                    content_text = art_soup.get_text(separator='\n').strip()
+                    
+                return {
+                    'title': title or 'Untitled',
+                    'link': latest['link'],
+                    'description': title,
+                    'content_text': content_text,
+                    'source': 'FUNGJAIZINE HTML Scrape'
+                }
+        except Exception as e:
+            print_status(f"FungjaizineのHTMLスクレイピングに失敗しました: {e}", "warning")
+
     # 1. 各サイトのRSSフィードURL設定
     if site == "debaser":
         feed_url = f"https://debasermagazine.com/{category}?format=rss" if category != "all" else "https://debasermagazine.com/music?format=rss"
@@ -224,6 +345,12 @@ def fetch_latest_article(site: str, category: str) -> Dict[str, str]:
         feed_url = "https://blow.streetvoice.com/feed/"
     elif site == "whattheduck":
         feed_url = "https://www.whattheduckmusic.com/blog-feed.xml"
+    elif site == "pophariini":
+        feed_url = "https://pophariini.com/feed/"
+    elif site == "whiteboardjournal":
+        feed_url = "https://www.whiteboardjournal.com/feed/"
+    else:
+        raise ValueError(f"不明なサイトです: {site}")
 
     print_status(f"RSSフィードから最新記事を取得中 ({site}): {feed_url} ...", "info")
     try:
@@ -601,7 +728,11 @@ def assemble_markdown_post(
     site_names = {
         "debaser": "Debaser Magazine",
         "streetvoice": "Blow (StreetVoice)",
-        "whattheduck": "What The Duck"
+        "whattheduck": "What The Duck",
+        "koreanindie": "Korean Indie",
+        "fungjaizine": "Fungjaizine",
+        "pophariini": "Pop Hari Ini",
+        "whiteboardjournal": "Whiteboard Journal"
     }
     site_name = site_names.get(site, site.upper())
     
@@ -665,11 +796,18 @@ def publish_to_hatena_blog_api(
     api_key: str,
     title: str,
     content: str,
+    categories: List[str] = None,
     draft: bool = True
 ) -> bool:
     """はてなブログ AtomPub APIを利用して記事を投稿する"""
     url = f"https://blog.hatena.ne.jp/{hatena_id}/{blog_id}/atom/entry"
     
+    # カテゴリタグの生成
+    category_tags = ""
+    if categories:
+        for cat in categories:
+            category_tags += f'  <category term="{cat}" />\n'
+            
     # XMLペイロードの組み立て (特殊文字崩れ防止のためCDATAでラップ)
     draft_val = "yes" if draft else "no"
     xml_data = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -678,7 +816,7 @@ def publish_to_hatena_blog_api(
   <title>{title}</title>
   <author><name>{hatena_id}</name></author>
   <content type="text/x-markdown"><![CDATA[{content}]]></content>
-  <app:control>
+{category_tags}  <app:control>
     <app:draft>{draft_val}</app:draft>
   </app:control>
 </entry>
@@ -994,12 +1132,24 @@ def main():
             print_status("はてなブログAPIキーが設定されていません。", "error")
             sys.exit(1)
             
+        # サイトに応じた国別カテゴリの判定
+        site_categories = {
+            "streetvoice": ["台湾"],
+            "koreanindie": ["韓国"],
+            "whattheduck": ["タイ"],
+            "fungjaizine": ["タイ"],
+            "pophariini": ["インドネシア"],
+            "whiteboardjournal": ["インドネシア"]
+        }
+        categories = site_categories.get(args.site, [])
+            
         publish_to_hatena_blog_api(
             hatena_id=args.hatena_id,
             blog_id=args.hatena_blog_id,
             api_key=args.hatena_api_key,
             title=blog_parts['blog_title'],
             content=complete_blog_post,
+            categories=categories,
             draft=args.draft
         )
 
