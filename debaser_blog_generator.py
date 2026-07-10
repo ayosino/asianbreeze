@@ -1112,23 +1112,86 @@ def main():
     most_viewed_video = {}
     
     if yt_query:
-        print_status(f"YouTubeで最新の動画リストを検索中: '{yt_query}' ...", "info")
-        latest_videos = get_youtube_videos(yt_query, "CAI")
+        print_status(f"YouTubeで動画リストを検索中: '{yt_query}' ...", "info")
+        videos = get_youtube_videos(yt_query, None)
         
-        print_status(f"YouTubeで関連性の高い人気動画リストを検索中: '{yt_query}' ...", "info")
-        most_viewed_videos = get_youtube_videos(yt_query, None)
-        
-        if latest_videos:
-            latest_video = latest_videos[0]
+        if videos:
+            # 再生回数の数値化用ヘルパー
+            def parse_view_count(views_str: str) -> int:
+                if not views_str:
+                    return 0
+                s = views_str.lower().strip()
+                s = s.replace('views', '').replace('view', '').replace(',', '').strip()
+                s = s.replace('回', '').replace('再生', '').strip()
+                
+                multiplier = 1
+                if 'billion' in s or 'b' in s:
+                    multiplier = 1000000000
+                    s = re.sub(r'[a-z]', '', s).strip()
+                elif 'million' in s or 'm' in s:
+                    multiplier = 1000000
+                    s = re.sub(r'[a-z]', '', s).strip()
+                elif 'k' in s:
+                    multiplier = 1000
+                    s = re.sub(r'[a-z]', '', s).strip()
+                elif '億' in s:
+                    multiplier = 100000000
+                    s = s.replace('億', '').strip()
+                elif '万' in s:
+                    multiplier = 10000
+                    s = s.replace('万', '').strip()
+                try:
+                    return int(float(s) * multiplier)
+                except ValueError:
+                    match = re.search(r'([\d\.]+)', s)
+                    if match:
+                        try:
+                            return int(float(match.group(1)) * multiplier)
+                        except ValueError:
+                            pass
+                    return 0
+
+            # 公開日の数値（日数）化用ヘルパー（小さいほど新しい）
+            def parse_published_to_days(pub_str: str) -> int:
+                if not pub_str:
+                    return 99999
+                s = pub_str.lower().strip()
+                match = re.search(r'(\d+)\s*(year|month|week|day|hour|minute|年|か月|月|週|日|時間|分)', s)
+                if not match:
+                    if 'second' in s or 'minute' in s or 'hour' in s or '秒' in s or '分' in s or '時間' in s or 'now' in s:
+                        return 0
+                    return 99999
+                val = int(match.group(1))
+                unit = match.group(2)
+                if unit in ['year', '年']:
+                    return val * 365
+                elif unit in ['month', 'か月', '月']:
+                    return val * 30
+                elif unit in ['week', '週']:
+                    return val * 7
+                elif unit in ['day', '日']:
+                    return val
+                elif unit in ['hour', 'minute', '時間', '分']:
+                    return 0
+                return 99999
+
+            # 1. 再生回数が多い順にソート (人気動画用)
+            by_views = sorted(videos, key=lambda v: parse_view_count(v.get('views', '')), reverse=True)
+            # 2. 公開日が新しい（日数が小さい）順にソート (最新動画用)
+            by_date = sorted(videos, key=lambda v: parse_published_to_days(v.get('published', '')))
             
-        if most_viewed_videos:
-            latest_id = latest_video.get('id') if latest_video else None
-            for video in most_viewed_videos:
-                if video.get('id') != latest_id:
-                    most_viewed_video = video
+            # 人気動画の選定 (再生数トップ)
+            most_viewed_video = by_views[0]
+            
+            # 最新の動画の選定 (公開日が一番新しく、かつ人気動画と異なる動画を優先)
+            most_viewed_id = most_viewed_video.get('id')
+            for video in by_date:
+                if video.get('id') != most_viewed_id:
+                    latest_video = video
                     break
-            if not most_viewed_video and most_viewed_videos:
-                most_viewed_video = most_viewed_videos[0]
+            # もし結果が1つしかないなど、別動画が見つからない場合は同じものにする
+            if not latest_video:
+                latest_video = most_viewed_video
     
     # YouTube動画の埋め込み部分の組み立て
     youtube_embed_text = ""
