@@ -353,7 +353,7 @@ def fetch_latest_article(site: str, category: str) -> Dict[str, str]:
     elif site == "pophariini":
         feed_url = "https://pophariini.com/feed/"
     elif site == "whiteboardjournal":
-        feed_url = "https://www.whiteboardjournal.com/feed/"
+        feed_url = "https://www.whiteboardjournal.com/category/music/feed/"
     else:
         raise ValueError(f"不明なサイトです: {site}")
 
@@ -1297,18 +1297,31 @@ def main():
         updated_time = None
         draft_to_publish = args.draft
         
+        # アーティスト紹介の情報が不足しているか判定
+        insufficient_info = False
+        artist_name = blog_parts.get("artist_name", "").strip()
+        bio_style = blog_parts.get("bio_style", "").strip()
+        
+        if not artist_name or artist_name.lower() == "unknown" or not bio_style or bio_style.lower() == "unknown":
+            insufficient_info = True
+            print_status("アーティスト名または紹介文の取得が不十分なため、情報不足と判定しました。", "warning")
+
         if args.scheduled:
-            try:
-                updated_time = get_next_schedule_time(
-                    hatena_id=args.hatena_id,
-                    blog_id=args.hatena_blog_id,
-                    api_key=args.hatena_api_key,
-                    max_pages=args.max_check_pages
-                )
-                draft_to_publish = False  # 予約投稿にするため下書き状態を解除して公開(予約)で投稿
-            except Exception as e:
-                print_status(f"予約投稿時刻の取得に失敗したため、下書きとして投稿します: {e}", "warning")
+            if insufficient_info:
+                print_status("情報不足と判定されたため、予約投稿を行わず下書き（下書き保存）として投稿します。", "warning")
                 draft_to_publish = True
+            else:
+                try:
+                    updated_time = get_next_schedule_time(
+                        hatena_id=args.hatena_id,
+                        blog_id=args.hatena_blog_id,
+                        api_key=args.hatena_api_key,
+                        max_pages=args.max_check_pages
+                    )
+                    draft_to_publish = False  # 予約投稿にするため下書き状態を解除して公開(予約)で投稿
+                except Exception as e:
+                    print_status(f"予約投稿時刻の取得に失敗したため、下書きとして投稿します: {e}", "warning")
+                    draft_to_publish = True
             
         publish_to_hatena_blog_api(
             hatena_id=args.hatena_id,
