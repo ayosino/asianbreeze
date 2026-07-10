@@ -2,8 +2,8 @@ name: Hatena Blog Auto Post
 
 on:
   schedule:
-    # 毎日午前7:00 JST (UTC 22:00) に起動
-    - cron: '0 22 * * *'
+    # 毎日午前6:00 JST (UTC 21:00) に起動
+    - cron: '0 21 * * *'
   workflow_dispatch: # GitHub Web UIから手動で実行可能にする
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site debaser --publish --max-check-pages 10
+          python debaser_blog_generator.py --site debaser --publish --max-check-pages 10 --scheduled
 
       - name: StreetVoice Blow（台湾）の最新記事の取得と投稿
         env:
@@ -42,7 +42,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site streetvoice --publish --max-check-pages 10
+          python debaser_blog_generator.py --site streetvoice --publish --max-check-pages 10 --scheduled
 
       - name: What The Duck（タイ）の最新記事の取得と投稿
         env:
@@ -52,7 +52,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site whattheduck --publish --max-check-pages 10
+          python debaser_blog_generator.py --site whattheduck --publish --max-check-pages 10 --scheduled
 
       - name: Korean Indie（韓国）の最新記事の取得と投稿
         env:
@@ -62,7 +62,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site koreanindie --publish --max-check-pages 10
+          python debaser_blog_generator.py --site koreanindie --publish --max-check-pages 10 --scheduled
 
       - name: Fungjaizine（タイ）の最新記事の取得と投稿
         env:
@@ -72,7 +72,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site fungjaizine --publish --max-check-pages 10
+          python debaser_blog_generator.py --site fungjaizine --publish --max-check-pages 10 --scheduled
 
       - name: Pop Hari Ini（インドネシア）の最新記事の取得と投稿
         env:
@@ -82,7 +82,7 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site pophariini --publish --max-check-pages 10
+          python debaser_blog_generator.py --site pophariini --publish --max-check-pages 10 --scheduled
 
       - name: Whiteboard Journal（インドネシア）の最新記事の取得と投稿
         env:
@@ -92,4 +92,4 @@ jobs:
           HATENA_API_KEY: ${{ secrets.HATENA_API_KEY }}
         continue-on-error: true
         run: |
-          python debaser_blog_generator.py --site whiteboardjournal --publish --max-check-pages 10
+          python debaser_blog_generator.py --site whiteboardjournal --publish --max-check-pages 10 --scheduled

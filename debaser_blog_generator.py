@@ -148,6 +148,11 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="重複チェック時に遡るはてなブログのエントリー一覧の最大ページ数 (デフォルト: 5)"
     )
+    parser.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="下書き保存ではなく予約投稿として公開する（最初の記事を8:00、以降2時間間隔でスケジュール）"
+    )
     return parser.parse_args()
 
 
@@ -797,7 +802,8 @@ def publish_to_hatena_blog_api(
     title: str,
     content: str,
     categories: List[str] = None,
-    draft: bool = True
+    draft: bool = True,
+    updated_time: str = None
 ) -> bool:
     """はてなブログ AtomPub APIを利用して記事を投稿する"""
     url = f"https://blog.hatena.ne.jp/{hatena_id}/{blog_id}/atom/entry"
@@ -808,6 +814,9 @@ def publish_to_hatena_blog_api(
         for cat in categories:
             category_tags += f'  <category term="{cat}" />\n'
             
+    # 投稿日時の設定 (予約投稿用)
+    updated_tag = f"  <updated>{updated_time}</updated>\n" if updated_time else ""
+            
     # XMLペイロードの組み立て (特殊文字崩れ防止のためCDATAでラップ)
     draft_val = "yes" if draft else "no"
     xml_data = f"""<?xml version="1.0" encoding="utf-8"?>
@@ -816,7 +825,7 @@ def publish_to_hatena_blog_api(
   <title>{title}</title>
   <author><name>{hatena_id}</name></author>
   <content type="text/x-markdown"><![CDATA[{content}]]></content>
-{category_tags}  <app:control>
+{updated_tag}{category_tags}  <app:control>
     <app:draft>{draft_val}</app:draft>
   </app:control>
 </entry>
@@ -948,6 +957,84 @@ def check_duplicate(
             
     print_status("重複する記事は見つかりませんでした。", "success")
     return False
+
+
+def get_next_schedule_time(
+    hatena_id: str,
+    blog_id: str,
+    api_key: str,
+    max_pages: int = 5
+) -> str:
+    """今日のはてなブログ投稿状況を確認し、次の予約投稿日時（JST）を決定する"""
+    import datetime
+    
+    tz_jst = datetime.timezone(datetime.timedelta(hours=9))
+    now_jst = datetime.datetime.now(tz_jst)
+    today_str = now_jst.strftime('%Y-%m-%d')
+    
+    url = f"https://blog.hatena.ne.jp/{hatena_id}/{blog_id}/atom/entry"
+    auth_str = f"{hatena_id}:{api_key}"
+    auth_b64 = base64.b64encode(auth_str.encode('utf-8')).decode('utf-8')
+    headers = {
+        'Authorization': f"Basic {auth_b64}",
+        'User-Agent': 'DebaserBlogGenerator/1.0'
+    }
+    
+    current_url = url
+    pages_checked = 0
+    scheduled_hours = []
+    
+    print_status("本日の投稿状況を確認し、予約投稿時間を決定します...", "info")
+    
+    while current_url and pages_checked < max_pages:
+        try:
+            req = urllib.request.Request(current_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                xml_data = response.read()
+            root = ET.fromstring(xml_data)
+            
+            entries = root.findall("{http://www.w3.org/2005/Atom}entry")
+            for entry in entries:
+                # 下書きは無視する
+                draft_el = entry.find("{http://www.w3.org/2007/app}control/{http://www.w3.org/2007/app}draft")
+                if draft_el is not None and draft_el.text == "yes":
+                    continue
+                
+                updated_el = entry.find("{http://www.w3.org/2005/Atom}updated")
+                if updated_el is not None and updated_el.text:
+                    dt_str = updated_el.text
+                    match = re.match(r'^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})', dt_str)
+                    if match:
+                        entry_date = match.group(1)
+                        entry_hour = int(match.group(2))
+                        if entry_date == today_str:
+                            scheduled_hours.append(entry_hour)
+            
+            # 次のページURLを取得
+            next_url = None
+            for link in root.findall("{http://www.w3.org/2005/Atom}link"):
+                if link.get("rel") == "next":
+                    next_url = link.get("href")
+                    break
+            current_url = next_url
+            pages_checked += 1
+        except Exception as e:
+            print_status(f"投稿スケジュール確認中にエラーが発生しました（デフォルトで判定します）: {e}", "warning")
+            break
+
+    # 次の投稿スロットを計算 (8:00から開始、2時間ごと。現在時刻より5分以上先であること)
+    target_hour = 8
+    while True:
+        target_time = now_jst.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        # もしターゲット時刻が現在時刻＋5分より過去、または既にその時間枠に投稿がある場合は次へ
+        if target_hour in scheduled_hours or target_time <= now_jst + datetime.timedelta(minutes=5):
+            target_hour += 2
+        else:
+            break
+            
+    scheduled_dt = now_jst.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+    print_status(f"決定した予約投稿時刻: {scheduled_dt.strftime('%Y-%m-%d %H:%M:%S')} JST", "success")
+    return scheduled_dt.isoformat()
 
 
 def main():
@@ -1143,6 +1230,23 @@ def main():
         }
         categories = site_categories.get(args.site, [])
             
+        # 予約投稿日時の決定
+        updated_time = None
+        draft_to_publish = args.draft
+        
+        if args.scheduled:
+            try:
+                updated_time = get_next_schedule_time(
+                    hatena_id=args.hatena_id,
+                    blog_id=args.hatena_blog_id,
+                    api_key=args.hatena_api_key,
+                    max_pages=args.max_check_pages
+                )
+                draft_to_publish = False  # 予約投稿にするため下書き状態を解除して公開(予約)で投稿
+            except Exception as e:
+                print_status(f"予約投稿時刻の取得に失敗したため、下書きとして投稿します: {e}", "warning")
+                draft_to_publish = True
+            
         publish_to_hatena_blog_api(
             hatena_id=args.hatena_id,
             blog_id=args.hatena_blog_id,
@@ -1150,7 +1254,8 @@ def main():
             title=blog_parts['blog_title'],
             content=complete_blog_post,
             categories=categories,
-            draft=args.draft
+            draft=draft_to_publish,
+            updated_time=updated_time
         )
 
 
