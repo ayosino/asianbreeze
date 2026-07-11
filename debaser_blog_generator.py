@@ -122,18 +122,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--hatena-id",
-        default=os.environ.get("HATENA_ID", "ayosino"),
-        help="はてなID (デフォルト: ayosino)"
+        default=os.environ.get("HATENA_ID"),
+        help="はてなID"
     )
     parser.add_argument(
         "--hatena-blog-id",
-        default=os.environ.get("HATENA_BLOG_ID", "ayosino.hatenablog.com"),
-        help="はてなブログID / ドメイン (デフォルト: ayosino.hatenablog.com)"
+        default=os.environ.get("HATENA_BLOG_ID"),
+        help="はてなブログID / ドメイン"
     )
     parser.add_argument(
         "--hatena-api-key",
-        default=os.environ.get("HATENA_API_KEY", "saxvecja0a"),
-        help="はてなブログAPIキー/APIパスコード (デフォルト: saxvecja0a)"
+        default=os.environ.get("HATENA_API_KEY"),
+        help="はてなブログAPIキー/APIパスコード"
     )
     parser.add_argument(
         "--draft",
@@ -1342,8 +1342,8 @@ def main():
     # はてなブログへの自動投稿処理
     if args.publish:
         print_status("はてなブログへの自動投稿（API）を開始します...", "info")
-        if not args.hatena_api_key:
-            print_status("はてなブログAPIキーが設定されていません。", "error")
+        if not args.hatena_id or not args.hatena_blog_id or not args.hatena_api_key:
+            print_status("はてなブログの認証情報（HATENA_ID, HATENA_BLOG_ID, HATENA_API_KEY）が不足しています。環境変数またはコマンドライン引数で設定してください。", "error")
             sys.exit(1)
             
         # サイトに応じた国別カテゴリの判定

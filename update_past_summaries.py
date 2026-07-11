@@ -22,18 +22,18 @@ def parse_args():
     parser = argparse.ArgumentParser(description="はてなブログの過去記事の概要（元記事の概要）を2行以内に自動要約・更新するスクリプト")
     parser.add_argument(
         "--hatena-id",
-        default=os.environ.get("HATENA_ID", "ayosino"),
-        help="はてなID (デフォルト: ayosino)"
+        default=os.environ.get("HATENA_ID"),
+        help="はてなID"
     )
     parser.add_argument(
         "--hatena-blog-id",
-        default=os.environ.get("HATENA_BLOG_ID", "ayosino.hatenablog.com"),
-        help="はてなブログID / ドメイン (デフォルト: ayosino.hatenablog.com)"
+        default=os.environ.get("HATENA_BLOG_ID"),
+        help="はてなブログID / ドメイン"
     )
     parser.add_argument(
         "--hatena-api-key",
-        default=os.environ.get("HATENA_API_KEY", "saxvecja0a"),
-        help="はてなブログAPIキー/APIパスコード (デフォルト: saxvecja0a)"
+        default=os.environ.get("HATENA_API_KEY"),
+        help="はてなブログAPIキー/APIパスコード"
     )
     parser.add_argument(
         "--api-key",
@@ -78,6 +78,9 @@ def summarize_text_to_two_lines(api_key: str, text: str) -> str:
 
 def main():
     args = parse_args()
+    if not args.hatena_id or not args.hatena_blog_id or not args.hatena_api_key:
+        print("エラー: はてなブログの認証情報（HATENA_ID, HATENA_BLOG_ID, HATENA_API_KEY）が不足しています。環境変数またはコマンドライン引数で設定してください。")
+        sys.exit(1)
     
     gemini_key = args.api_key or os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
