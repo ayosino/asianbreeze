@@ -1342,7 +1342,15 @@ def main():
             "pophariini": ["インドネシア"],
             "whiteboardjournal": ["インドネシア"]
         }
-        categories = site_categories.get(args.site, [])
+        categories = list(site_categories.get(args.site, []))
+        
+        # 国別カテゴリに加え、Geminiが抽出したジャンル（小分類）カテゴリを追加
+        genres = blog_parts.get("genre", [])
+        if genres:
+            for g in genres:
+                g_clean = g.strip()
+                if g_clean and g_clean not in categories:
+                    categories.append(g_clean)
             
         # 予約投稿日時の決定
         updated_time = None
