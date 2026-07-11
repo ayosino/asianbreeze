@@ -598,7 +598,7 @@ def generate_content_with_gemini(
         class HatenaBlogParts(BaseModel):
             is_compilation: bool = Field(description="この記事が『New Music Friday』や『フェス出演者紹介』、『新曲まとめ』など、複数のアーティストをオムニバス形式で紹介する記事である場合はTrue、単一のアーティスト紹介記事である場合はFalse。記事内に3組以上のアーティストが登場する場合は原則Trueにしてください")
             blog_title: str = Field(description="はてなブログ記事のキャッチーなタイトル（日本語、50文字以内、例: 【K-Indie】Kuang Programの深淵なるノイズロックの世界、または 【タイ】Maho Rasop 2024 出演者ラインナップ紹介 など）")
-            genre: List[str] = Field(description="アーティストのジャンル（単一アーティスト紹介時（is_compilationがFalse）のみ使用、最大3つ。複数紹介時は空リスト）")
+            genre: List[str] = Field(description=f"アーティストのジャンル（単一アーティスト紹介時（is_compilationがFalse）のみ使用、最大3つ。必ず次のリスト内の文字列のみから選択してください: {', '.join(ALLOWED_GENRES)}。どれにも当てはまらない場合は空リストにしてください。複数紹介時は空リスト）")
             bio_style: str = Field(description="経歴・作風（単一アーティスト紹介時（is_compilationがFalse）のみ使用、300文字程度。複数紹介時は空文字列）")
             youtube_query: str = Field(description="YouTube検索クエリ（単一アーティスト紹介時（is_compilationがFalse）のみ使用。複数紹介時は空文字列）")
             article_purpose: str = Field(description="元記事の趣旨（なぜこの記事が書かれたのか、どのような文脈・意図（例：新譜のリリース、周年記念、シーンの現状紹介など）で公開されたかを100文字〜150文字程度で簡潔に説明。口調は「です」「ます」）")
@@ -615,6 +615,8 @@ def generate_content_with_gemini(
             f"# Constraints\n"
             f"- 元記事が『New Music Friday』や『フェス』『新曲まとめ（Short Stuff等）』のように、複数のアーティストを紹介しているオムニバス形式の記事である場合は、is_compilationをTrueに設定し、紹介されている各アーティスト名と1行以内の日本語紹介文をcompilation_artistsにリストアップしてください。\n"
             f"- 単一アーティストの紹介記事である場合は、is_compilationをFalseに設定し、ジャンル、経歴・作風、YouTube検索クエリを生成してください。\n"
+            f"- ジャンル（genre）を決定する際は、必ず次のリストの中から最も適合するものを最大3つ選択してください。リストにない他のジャンルは一切含めないでください。どれにも当てはまらない場合は、空リスト（[]）にしてください。\n"
+            f"  許可リスト: {', '.join(ALLOWED_GENRES)}\n"
             f"- 事実が不明瞭な場合は、嘘を書かずに一般的な音楽的特徴から推測される作風として記述してください。\n"
             f"- 口調は「〜です」「〜ます」の、知的で洗練されたトーンに統一してください。\n"
         )
