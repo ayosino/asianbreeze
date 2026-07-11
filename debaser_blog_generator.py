@@ -602,7 +602,7 @@ def generate_content_with_gemini(
             genre: List[str] = Field(description=f"アーティストのジャンル（単一アーティスト紹介時（is_compilationがFalse）のみ使用、最大3つ。必ず次のリスト内の文字列のみから選択してください: {', '.join(ALLOWED_GENRES)}。どれにも当てはまらない場合は空リストにしてください。複数紹介時は空リスト）")
             bio_style: str = Field(description="経歴・作風（単一アーティスト紹介時（is_compilationがFalse）のみ使用、300文字程度。複数紹介時は空文字列）")
             youtube_query: str = Field(description="YouTube検索クエリ（単一アーティスト紹介時（is_compilationがFalse）のみ使用。複数紹介時は空文字列）")
-            article_purpose: str = Field(description="元記事の趣旨（なぜこの記事が書かれたのか、どのような文脈・意図（例：新譜のリリース、周年記念、シーンの現状紹介など）で公開されたかを100文字〜150文字程度で簡潔に説明。口調は「です」「ます」）")
+            article_purpose: str = Field(description="元記事の趣旨・要約（著作権保護に配慮し、どのような意図・文脈（例：新譜のリリース、周年記念など）で公開された記事かを、簡潔に【改行を含めて必ず2行以内】で要約してください。口調は「です」「ます」）")
             compilation_artists: List[ArtistIntro] = Field(description="複数アーティスト紹介記事（is_compilationがTrue）の場合のみ、紹介されているアーティスト名と1行以内の紹介文のリスト。単一アーティストの場合は空リスト")
 
         user_prompt = (
@@ -619,6 +619,7 @@ def generate_content_with_gemini(
             f"- ジャンル（genre）を決定する際は、必ず次のリストの中から最も適合するものを最大3つ選択してください。リストにない他のジャンルは一切含めないでください。どれにも当てはまらない場合は、空リスト（[]）にしてください。\n"
             f"  許可リスト: {', '.join(ALLOWED_GENRES)}\n"
             f"- 事実が不明瞭な場合は、嘘を書かずに一般的な音楽的特徴から推測される作風として記述してください。\n"
+            f"- 元記事の趣旨・要約（article_purpose）を決定する際は、著作権保護に配慮し、なぜこの記事が書かれたのか、どのような意図・背景で公開されたのかを、簡潔に【必ず2行以内】で要約してください。\n"
             f"- 口調は「〜です」「〜ます」の、知的で洗練されたトーンに統一してください。\n"
         )
 
