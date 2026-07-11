@@ -817,17 +817,25 @@ def publish_to_hatena_blog_api(
     # 投稿日時の設定 (予約投稿用)
     updated_tag = f"  <updated>{updated_time}</updated>\n" if updated_time else ""
             
+    # 予約投稿用のフラグ設定
+    scheduled_tag = ""
+    if updated_time:
+        scheduled_tag = "    <hatenablog:scheduled>yes</hatenablog:scheduled>\n"
+        draft_val = "yes"
+    else:
+        draft_val = "yes" if draft else "no"
+            
     # XMLペイロードの組み立て (特殊文字崩れ防止のためCDATAでラップ)
-    draft_val = "yes" if draft else "no"
     xml_data = f"""<?xml version="1.0" encoding="utf-8"?>
 <entry xmlns="http://www.w3.org/2005/Atom"
-       xmlns:app="http://www.w3.org/2007/app">
+       xmlns:app="http://www.w3.org/2007/app"
+       xmlns:hatenablog="http://www.hatena.ne.jp/info/xmlns#hatenablog">
   <title>{title}</title>
   <author><name>{hatena_id}</name></author>
   <content type="text/x-markdown"><![CDATA[{content}]]></content>
 {updated_tag}{category_tags}  <app:control>
     <app:draft>{draft_val}</app:draft>
-  </app:control>
+{scheduled_tag}  </app:control>
 </entry>
 """
     
