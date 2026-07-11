@@ -97,50 +97,66 @@ def main():
                 
                 content = content_el.text
                 
-                # 本文から「* **ジャンル**: シューゲイザー、ドリームポップ」などを抽出
-                match = re.search(r'\*\s*\*\*ジャンル\*\*:\s*(.*)', content)
-                if not match:
-                    continue
-                    
-                genres_str = match.group(1).strip()
-                genres = [g.strip() for g in re.split(r'[、,，]', genres_str) if g.strip()]
-                if not genres:
-                    continue
-                
                 # 現在のカテゴリを取得
                 current_cats = [cat.get("term") for cat in entry.findall("{http://www.w3.org/2005/Atom}category") if cat.get("term")]
                 
-                # 許可されたジャンルリストと照らし合わせてフィルタリング
-                assigned_genres = []
-                for g in genres:
-                    matched = None
-                    for allowed in ALLOWED_GENRES:
-                        if g.lower() == allowed.lower():
-                            matched = allowed
-                            break
-                    if matched and matched not in assigned_genres:
-                        assigned_genres.append(matched)
+                # 既存のカテゴリから、国名（大分類）以外を除去して一旦リセットする
+                preserved_cats = []
+                categories_to_remove = []
+                for cat in entry.findall("{http://www.w3.org/2005/Atom}category"):
+                    term = cat.get("term")
+                    if term in ["韓国", "台湾", "タイ", "インドネシア"]:
+                        preserved_cats.append(term)
+                    else:
+                        categories_to_remove.append(cat)
                 
-                # 1つも該当しなければ「不明」にする
-                if not assigned_genres:
+                # ElementTreeから非国名カテゴリを削除
+                for cat in categories_to_remove:
+                    entry.remove(cat)
+                
+                # 本文から「* **ジャンル**: シューゲイザー、ドリームポップ」などを抽出
+                match = re.search(r'\*\s*\*\*ジャンル\*\*:\s*(.*)', content)
+                assigned_genres = []
+                
+                if match:
+                    genres_str = match.group(1).strip()
+                    genres = [g.strip() for g in re.split(r'[、,，]', genres_str) if g.strip()]
+                    
+                    # 許可されたジャンルリストと照らし合わせてフィルタリング
+                    for g in genres:
+                        matched = None
+                        for allowed in ALLOWED_GENRES:
+                            if g.lower() == allowed.lower():
+                                matched = allowed
+                                break
+                        if matched and matched not in assigned_genres:
+                            assigned_genres.append(matched)
+                
+                # まとめ記事（オムニバス）の判定
+                is_compilation = False
+                if "紹介アーティスト一覧" in content or "### 紹介アーティスト一覧" in content:
+                    is_compilation = True
+                
+                # 1つも該当するジャンルがなく、かつまとめ記事でない場合は「不明」を割り振る
+                if not assigned_genres and not is_compilation:
                     assigned_genres = ["不明"]
                 
-                # 追加すべきジャンルを特定
-                missing_genres = [g for g in assigned_genres if g not in current_cats]
-                if not missing_genres:
+                # カテゴリ構成に変更があるかチェック
+                target_cats = preserved_cats + assigned_genres
+                if sorted(current_cats) == sorted(target_cats):
+                    # 変更がない場合は更新しない
                     continue
                     
                 print(f"【要更新】記事: 「{title}」")
                 print(f"  - 現在のカテゴリ: {current_cats}")
-                print(f"  - 追加するジャンル: {missing_genres}")
+                print(f"  - リセット＆再付与後のカテゴリ: {target_cats}")
                 
                 # 新しいカテゴリ要素を追加
-                for new_g in missing_genres:
+                for new_g in assigned_genres:
                     cat_el = ET.Element("{http://www.w3.org/2005/Atom}category", term=new_g)
                     entry.append(cat_el)
                 
-                # 更新されたカテゴリ
-                all_cats = current_cats + missing_genres
+                all_cats = target_cats
                 
                 # Edit URL (Member URI) の取得
                 edit_url = None
