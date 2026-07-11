@@ -33,6 +33,15 @@ except ImportError:
     except ImportError:
         HAS_NEW_SDK = None
 
+# 許可されたジャンル一覧（固定小分類カテゴリ）
+ALLOWED_GENRES = [
+    "インディーロック", "オルタナティブロック", "シューゲイザー", "ポストパンク", "マスロック", "ノイズポップ",
+    "インディーポップ", "ドリームポップ", "シンセポップ", "エレクトロニカ", "シティポップ", "レトロポップ",
+    "フォーク", "アコースティック", "シンガーソングライター", "インディフォーク",
+    "R&B", "ソウル", "ヒップホップ", "ローファイヒップホップ"
+]
+
+
 # コンソール色出力定義
 class Colors:
     HEADER = '\033[95m'
@@ -1345,12 +1354,28 @@ def main():
         categories = list(site_categories.get(args.site, []))
         
         # 国別カテゴリに加え、Geminiが抽出したジャンル（小分類）カテゴリを追加
+        is_compilation = blog_parts.get("is_compilation", False)
         genres = blog_parts.get("genre", [])
+        assigned_genres = []
+        
         if genres:
             for g in genres:
                 g_clean = g.strip()
-                if g_clean and g_clean not in categories:
-                    categories.append(g_clean)
+                # ALLOWED_GENRESと大文字小文字を無視してマッチング
+                matched = None
+                for allowed in ALLOWED_GENRES:
+                    if g_clean.lower() == allowed.lower():
+                        matched = allowed
+                        break
+                if matched:
+                    if matched not in categories:
+                        categories.append(matched)
+                        assigned_genres.append(matched)
+                        
+        # 1つも該当するジャンルがなく、かつまとめ記事でない場合は「不明」を付与
+        if not is_compilation and not assigned_genres:
+            if "不明" not in categories:
+                categories.append("不明")
             
         # 予約投稿日時の決定
         updated_time = None

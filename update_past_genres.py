@@ -5,6 +5,14 @@ import re
 import argparse
 import os
 
+# 許可されたジャンル一覧（固定小分類カテゴリ）
+ALLOWED_GENRES = [
+    "インディーロック", "オルタナティブロック", "シューゲイザー", "ポストパンク", "マスロック", "ノイズポップ",
+    "インディーポップ", "ドリームポップ", "シンセポップ", "エレクトロニカ", "シティポップ", "レトロポップ",
+    "フォーク", "アコースティック", "シンガーソングライター", "インディフォーク",
+    "R&B", "ソウル", "ヒップホップ", "ローファイヒップホップ"
+]
+
 def parse_args():
     parser = argparse.ArgumentParser(description="はてなブログの過去記事にジャンル小分類カテゴリを自動付与するスクリプト")
     parser.add_argument(
@@ -102,8 +110,23 @@ def main():
                 # 現在のカテゴリを取得
                 current_cats = [cat.get("term") for cat in entry.findall("{http://www.w3.org/2005/Atom}category") if cat.get("term")]
                 
+                # 許可されたジャンルリストと照らし合わせてフィルタリング
+                assigned_genres = []
+                for g in genres:
+                    matched = None
+                    for allowed in ALLOWED_GENRES:
+                        if g.lower() == allowed.lower():
+                            matched = allowed
+                            break
+                    if matched and matched not in assigned_genres:
+                        assigned_genres.append(matched)
+                
+                # 1つも該当しなければ「不明」にする
+                if not assigned_genres:
+                    assigned_genres = ["不明"]
+                
                 # 追加すべきジャンルを特定
-                missing_genres = [g for g in genres if g not in current_cats]
+                missing_genres = [g for g in assigned_genres if g not in current_cats]
                 if not missing_genres:
                     continue
                     
