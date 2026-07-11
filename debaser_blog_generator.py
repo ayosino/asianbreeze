@@ -582,12 +582,18 @@ def generate_content_with_gemini(
         # はてなブログ記事パーツの生成
         from pydantic import BaseModel, Field
 
+        class ArtistIntro(BaseModel):
+            name: str = Field(description="アーティスト名")
+            description: str = Field(description="アーティストの簡単な紹介（日本語、1行以内・100文字程度）")
+
         class HatenaBlogParts(BaseModel):
-            blog_title: str = Field(description="はてなブログ記事のキャッチーなタイトル（日本語、50文字以内、例: 【K-Indie】Kuang Programの深淵なるノイズロックの世界）")
-            genre: List[str] = Field(description="アーティストのジャンル（シューゲイザー、ドリームポップ、オルタナティブロックなど、最大3つ）")
-            bio_style: str = Field(description="経歴・作風（日本の音楽ファンが興味を持つような文脈を交え、300文字程度で簡潔かつ魅力的に解説。口調は「です」「ます」）")
-            youtube_query: str = Field(description="YouTube検索クエリ（「アーティスト名 曲名 MV」の形式で、最も公式ミュージックビデオがヒットしやすい英語または現地語のクエリ）")
+            is_compilation: bool = Field(description="この記事が『New Music Friday』や『フェス出演者紹介』、『新曲まとめ』など、複数のアーティストをオムニバス形式で紹介する記事である場合はTrue、単一のアーティスト紹介記事である場合はFalse。記事内に3組以上のアーティストが登場する場合は原則Trueにしてください")
+            blog_title: str = Field(description="はてなブログ記事のキャッチーなタイトル（日本語、50文字以内、例: 【K-Indie】Kuang Programの深淵なるノイズロックの世界、または 【タイ】Maho Rasop 2024 出演者ラインナップ紹介 など）")
+            genre: List[str] = Field(description="アーティストのジャンル（単一アーティスト紹介時（is_compilationがFalse）のみ使用、最大3つ。複数紹介時は空リスト）")
+            bio_style: str = Field(description="経歴・作風（単一アーティスト紹介時（is_compilationがFalse）のみ使用、300文字程度。複数紹介時は空文字列）")
+            youtube_query: str = Field(description="YouTube検索クエリ（単一アーティスト紹介時（is_compilationがFalse）のみ使用。複数紹介時は空文字列）")
             article_purpose: str = Field(description="元記事の趣旨（なぜこの記事が書かれたのか、どのような文脈・意図（例：新譜のリリース、周年記念、シーンの現状紹介など）で公開されたかを100文字〜150文字程度で簡潔に説明。口調は「です」「ます」）")
+            compilation_artists: List[ArtistIntro] = Field(description="複数アーティスト紹介記事（is_compilationがTrue）の場合のみ、紹介されているアーティスト名と1行以内の紹介文のリスト。単一アーティストの場合は空リスト")
 
         user_prompt = (
             f"# Context\n"
@@ -598,6 +604,8 @@ def generate_content_with_gemini(
             f"- アーティスト名: {artist_name}\n"
             f"- 元記事の本文（参考情報）: \n{content_text[:3000]}\n\n"
             f"# Constraints\n"
+            f"- 元記事が『New Music Friday』や『フェス』『新曲まとめ（Short Stuff等）』のように、複数のアーティストを紹介しているオムニバス形式の記事である場合は、is_compilationをTrueに設定し、紹介されている各アーティスト名と1行以内の日本語紹介文をcompilation_artistsにリストアップしてください。\n"
+            f"- 単一アーティストの紹介記事である場合は、is_compilationをFalseに設定し、ジャンル、経歴・作風、YouTube検索クエリを生成してください。\n"
             f"- 事実が不明瞭な場合は、嘘を書かずに一般的な音楽的特徴から推測される作風として記述してください。\n"
             f"- 口調は「〜です」「〜ます」の、知的で洗練されたトーンに統一してください。\n"
         )
@@ -615,24 +623,26 @@ def generate_content_with_gemini(
             )
             result_data = json.loads(resp_blog.text)
             
-            genres_str = "、".join(result_data['genre'])
+            genres_str = "、".join(result_data.get('genre', []))
             text_format = (
-                f"ブログタイトル: {result_data['blog_title']}\n"
+                f"ブログタイトル: {result_data.get('blog_title', '')}\n"
                 f"1. ジャンル: {genres_str}\n"
-                f"2. 経歴・作風: {result_data['bio_style']}\n"
-                f"3. YouTube検索クエリ: {result_data['youtube_query']}\n"
-                f"4. 元記事の趣旨: {result_data['article_purpose']}"
+                f"2. 経歴・作風: {result_data.get('bio_style', '')}\n"
+                f"3. YouTube検索クエリ: {result_data.get('youtube_query', '')}\n"
+                f"4. 元記事の趣旨: {result_data.get('article_purpose', '')}"
             )
             
             return {
                 "title": title,
                 "link": link,
                 "artist_name": artist_name,
-                "blog_title": result_data['blog_title'],
-                "genre": result_data['genre'],
-                "bio_style": result_data['bio_style'],
-                "youtube_query": result_data['youtube_query'],
-                "article_purpose": result_data['article_purpose'],
+                "blog_title": result_data.get('blog_title', ''),
+                "genre": result_data.get('genre', []),
+                "bio_style": result_data.get('bio_style', ''),
+                "youtube_query": result_data.get('youtube_query', ''),
+                "article_purpose": result_data.get('article_purpose', ''),
+                "is_compilation": result_data.get('is_compilation', False),
+                "compilation_artists": result_data.get('compilation_artists', []),
                 "text_output": text_format
             }
         except Exception as e:
@@ -717,6 +727,8 @@ def generate_content_with_gemini(
         "bio_style": bio_style,
         "youtube_query": yt_query,
         "article_purpose": article_purpose,
+        "is_compilation": False,
+        "compilation_artists": [],
         "text_output": text_output
     }
 
@@ -728,8 +740,6 @@ def assemble_markdown_post(
     most_viewed_video: Dict[str, Any]
 ) -> str:
     """はてなブログ用に各パーツをアセンブルして綺麗なMarkdown記事を作成する"""
-    genres_str = "、".join(blog_parts.get("genre", []))
-    
     site_names = {
         "debaser": "Debaser Magazine",
         "streetvoice": "Blow (StreetVoice)",
@@ -740,8 +750,40 @@ def assemble_markdown_post(
         "whiteboardjournal": "Whiteboard Journal"
     }
     site_name = site_names.get(site, site.upper())
-    
     translate_url = f"https://translate.google.com/translate?sl=auto&tl=ja&u={urllib.parse.quote(blog_parts['link'])}"
+    
+    is_compilation = blog_parts.get("is_compilation", False)
+    
+    if is_compilation:
+        artists_section = ""
+        comp_artists = blog_parts.get("compilation_artists", [])
+        for art in comp_artists:
+            name = art.get("name", "").strip()
+            desc = art.get("description", "").strip()
+            if name and desc:
+                artists_section += f"* **{name}**: {desc}\n"
+                
+        body = f"""海外のインディーズ音楽メディア「{site_name}」の最新記事から、紹介されている注目アーティストをまとめてご紹介します。
+
+### 元記事情報
+* **紹介元の記事 (原文)**: [{blog_parts['title']}]({blog_parts['link']})
+* **紹介元の記事 (日本語自動翻訳版)**: [Google翻訳で読む]({translate_url})
+* **メディア**: {site_name}
+
+---
+
+### 元記事の概要
+{blog_parts['article_purpose']}
+
+---
+
+### 紹介アーティスト一覧
+
+{artists_section}
+*(※この記事は {site_name} の公開記事情報を元に、自動生成ツールによって作成されました。)*"""
+        return body
+
+    genres_str = "、".join(blog_parts.get("genre", []))
     
     body = f"""海外のインディーズ音楽メディア「{site_name}」の最新記事から、注目のアーティストをご紹介します。
 
@@ -1115,11 +1157,12 @@ def main():
         sys.exit(1)
         
     # YouTube検索の実行
-    yt_query = blog_parts["youtube_query"]
+    yt_query = blog_parts.get("youtube_query")
+    is_compilation = blog_parts.get("is_compilation", False)
     latest_video = {}
     most_viewed_video = {}
     
-    if yt_query:
+    if yt_query and not is_compilation:
         print_status(f"YouTubeで動画リストを検索中: '{yt_query}' ...", "info")
         videos = get_youtube_videos(yt_query, None)
         
@@ -1307,12 +1350,14 @@ def main():
         
         # アーティスト紹介の情報が不足しているか判定
         insufficient_info = False
-        artist_name = blog_parts.get("artist_name", "").strip()
-        bio_style = blog_parts.get("bio_style", "").strip()
+        is_compilation = blog_parts.get("is_compilation", False)
         
-        if not artist_name or artist_name.lower() == "unknown" or not bio_style or bio_style.lower() == "unknown":
-            insufficient_info = True
-            print_status("アーティスト名または紹介文の取得が不十分なため、情報不足と判定しました。", "warning")
+        if not is_compilation:
+            artist_name = blog_parts.get("artist_name", "").strip()
+            bio_style = blog_parts.get("bio_style", "").strip()
+            if not artist_name or artist_name.lower() == "unknown" or not bio_style or bio_style.lower() == "unknown":
+                insufficient_info = True
+                print_status("アーティスト名または紹介文の取得が不十分なため、情報不足と判定しました。", "warning")
 
         if args.scheduled:
             if insufficient_info:
