@@ -776,6 +776,16 @@ def assemble_markdown_post(
             if name and desc:
                 artists_section += f"* **{name}**: {desc}\n"
                 
+        # 最初のアーティストの人気動画の埋め込みを追加
+        video_embed_section = ""
+        if most_viewed_video and most_viewed_video.get("hatena_embed"):
+            first_art_name = ""
+            if comp_artists:
+                first_art = comp_artists[0]
+                first_art_name = first_art.get("name", "").strip() if isinstance(first_art, dict) else getattr(first_art, "name", "").strip()
+            
+            video_embed_section = f"\n---\n\n### 注目アーティスト動画・MV\nここでは紹介されたアーティストの中から **{first_art_name}** の人気動画をご紹介します。\n\n{most_viewed_video.get('hatena_embed')}\n"
+
         body = f"""海外のインディーズ音楽メディア「{site_name}」の最新記事から、紹介されている注目アーティストをまとめてご紹介します。
 
 ### 元記事情報
@@ -792,7 +802,7 @@ def assemble_markdown_post(
 
 ### 紹介アーティスト一覧
 
-{artists_section}
+{artists_section}{video_embed_section}
 *(※この記事は {site_name} の公開記事情報を元に、自動生成ツールによって作成されました。)*"""
         return body
 
@@ -1175,7 +1185,15 @@ def main():
     latest_video = {}
     most_viewed_video = {}
     
-    if yt_query and not is_compilation:
+    if is_compilation:
+        comp_artists = blog_parts.get("compilation_artists", [])
+        if comp_artists:
+            first_art = comp_artists[0]
+            first_art_name = first_art.get("name", "").strip() if isinstance(first_art, dict) else getattr(first_art, "name", "").strip()
+            if first_art_name:
+                yt_query = first_art_name
+                
+    if yt_query:
         print_status(f"YouTubeで動画リストを検索中: '{yt_query}' ...", "info")
         videos = get_youtube_videos(yt_query, None)
         
